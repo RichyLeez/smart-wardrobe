@@ -31,6 +31,8 @@ export interface ShellInput {
   back?: { rect: GarmentRect; mask: AlphaGrid };
   /** 第几层，越大越靠外 */
   layer: number;
+  /** 塞进下装的上衣：这个高度（y 向下）以下的部分不要 */
+  clipBelow?: number;
 }
 
 export function sampleAlpha(m: AlphaGrid, u: number, v: number): number {
@@ -359,7 +361,10 @@ export function shellGrid(m: Body3D, input: ShellInput, innerLayers?: InnerLayer
     return a;
   };
   const opaque = new Uint8Array(n);
+  const clip = input.clipBelow ?? Infinity;
   for (let i = 0; i < rows; i++) {
+    // 塞进去的部分：截断线以下多留一行，和下装重叠，避免露缝
+    if (ys[i] > clip + dx * 1.5) continue;
     for (let j = 0; j < cols; j++) opaque[i * cols + j] = alphaAt(xs[j], ys[i]) > 110 ? 1 : 0;
   }
   /** 在 xa（不透明）和 xb（透明）之间二分，求透明度 = 110 的精确位置 */

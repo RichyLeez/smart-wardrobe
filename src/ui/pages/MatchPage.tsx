@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import { OCCASION_LABELS } from '../../core/catalog';
-import { applyFeedback, recommend, summarizeNotes, type OutfitEvaluation, type RecommendContext } from '../../core/recommend';
-import { ItemThumb, NoteList, PaletteBar, PartBars, ScoreTape } from '../components/Bits';
+import { applyFeedback, evaluateOutfit, recommend, summarizeNotes, type OutfitEvaluation, type RecommendContext } from '../../core/recommend';
+import type { Styling } from '../../core/types';
+import { ItemThumb, NoteList, PaletteBar, PartBars, ScoreTape, StylingChips } from '../components/Bits';
 import { Icon } from '../components/Icon';
 import { Mannequin } from '../components/Mannequin';
 import { newId, useStore } from '../store';
 import { useUI } from '../ui';
-import { snapshotRecord } from './Today';
+import { snapshotRecord, stylingOrUndefined } from './Today';
 
 export function MatchPage({ itemId }: { itemId: string }) {
   const store = useStore();
@@ -33,6 +34,9 @@ export function MatchPage({ itemId }: { itemId: string }) {
     [items, today, goals, records, feedback, settings.rotation],
   );
   const result = useMemo(() => recommend(ctx, { pinned: [itemId], exclude, seed }), [ctx, itemId, exclude, seed]);
+  // 用户改过穿法的那几套（按组合签名）
+  const [stylingOv, setStylingOv] = useState<Record<string, Styling>>({});
+  const outfits = result.outfits.map((o) => (stylingOv[o.signature] ? evaluateOutfit(o.items, ctx, stylingOv[o.signature]) : o));
 
   async function wear(o: OutfitEvaluation) {
     const now = Date.now();
@@ -41,6 +45,7 @@ export function MatchPage({ itemId }: { itemId: string }) {
       date: today.date,
       occasion: today.occasion ?? undefined,
       tempC: today.weather.tempC,
+      styling: o.styling,
       source: 'recommend',
       createdAt: now,
       updatedAt: now,
@@ -84,14 +89,15 @@ export function MatchPage({ itemId }: { itemId: string }) {
                   </p>
                 </div>
               </div>
-              {result.outfits.length === 0 && <NoteList notes={result.notes} />}
-              {result.outfits.map((o, idx) => (
+              {outfits.length === 0 && <NoteList notes={result.notes} />}
+              {outfits.map((o, idx) => (
                 <article className="match-card" key={o.signature} aria-label={`搭配 ${idx + 1}，${o.score} 分`}>
                   <div className="stage">
-                    <Mannequin body={settings.body} items={o.items} animate />
+                    <Mannequin body={settings.body} items={o.items} styling={o.styling} animate />
                   </div>
                   <ScoreTape score={o.score} />
-                  <PaletteBar items={o.items} />
+                  <PaletteBar items={o.items} styling={o.styling} />
+                  <StylingChips items={o.items} styling={o.styling} onChange={(st) => setStylingOv((m) => ({ ...m, [o.signature]: st }))} />
                   <p className="small match-items">{o.items.map((i) => i.name).join('、')}</p>
                   <NoteList notes={summarizeNotes(o)} />
                   <button
@@ -109,7 +115,7 @@ export function MatchPage({ itemId }: { itemId: string }) {
                       <Icon name="check" />
                       就穿这套
                     </button>
-                    <button type="button" className="btn" onClick={() => ui.sendToBuilder({ itemIds: o.items.map((i) => i.id) })}>
+                    <button type="button" className="btn" onClick={() => ui.sendToBuilder({ itemIds: o.items.map((i) => i.id), styling: stylingOrUndefined(o.styling) })}>
                       去试搭调整
                     </button>
                   </div>

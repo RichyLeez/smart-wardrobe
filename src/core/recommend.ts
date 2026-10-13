@@ -12,6 +12,7 @@ import {
 } from './catalog';
 import { chroma, deltaE, hexToLab, hue, hueDiff, isNeutralColor, seededRandom, type Lab } from './color';
 import { fabricOf, type FabricProfile } from './fabric';
+import { canToggleOpen, canTuck, isOpen, isTucked, normalizeStyling } from './styling';
 import { daysBetween, wearStats, type WearStat } from './stats';
 import type {
   BodyGoal,
@@ -21,6 +22,7 @@ import type {
   Note,
   Occasion,
   Style,
+  Styling,
   WearRecord,
   WeatherInput,
 } from './types';
@@ -77,6 +79,8 @@ export interface OutfitEvaluation {
   score: number;
   parts: Record<PartKey, ScorePart>;
   signature: string;
+  /** 穿法：上衣是否塞进下装、外套是否敞开 */
+  styling: Styling;
 }
 
 export interface RecommendResult {
@@ -179,11 +183,21 @@ interface AccentGroup {
   weight: number;
 }
 
-function colorPart(p: Prepared, items: Item[]): ScorePart {
+/** 合上的外套盖住大半件上衣，敞开时露出一条：上衣露出的面积比例 */
+function visibleShare(items: Item[], st: Styling | undefined): (i: Item) => number {
+  const outerItem = byCat(items, 'outer');
+  const outerOpen = !!outerItem && isOpen(outerItem, st);
+  return (i: Item) => (i.category === 'top' && outerItem ? (outerOpen ? 0.75 : 0.4) : 1);
+}
+
+function colorPart(p: Prepared, items: Item[], st: Styling): ScorePart {
   const notes: Note[] = [];
+  const outerItem = byCat(items, 'outer');
+  const outerOpen = !!outerItem && isOpen(outerItem, st);
+  const visible = visibleShare(items, st);
   const pieces = items
     .filter((i) => i.category !== 'jewelry')
-    .map((i) => ({ item: i, lab: labOf(p, i), w: COLOR_WEIGHT[i.category] ?? 0.3 }));
+    .map((i) => ({ item: i, lab: labOf(p, i), w: (COLOR_WEIGHT[i.category] ?? 0.3) * visible(i) }));
   const groups: AccentGroup[] = [];
   const addAccent = (name: string, lab: Lab, w: number) => {
     const h = hue(lab);
@@ -277,6 +291,14 @@ function colorPart(p: Prepared, items: Item[]): ScorePart {
     if (dl >= 25) score += 0.03;
   }
 
+  if (outerItem && outerOpen) {
+    const inner = byCat(items, 'top') ?? byCat(items, 'dress');
+    if (inner && Math.abs(lightness(p, inner) - lightness(p, outerItem)) >= 25) {
+      score += 0.03;
+      notes.push({ kind: 'good', text: `${outerItem.name}敞开露出${inner.name}，深浅对比有层次` });
+    }
+  }
+
   // 呼应：鞋、包、腰带、围巾、帽子的颜色和某件主体单品同色系
   const mains = pieces.filter((x) => isMain(x.item) && chroma(x.lab) > 15);
   for (const acc of pieces) {
@@ -337,7 +359,8 @@ export interface OutfitPalette {
 }
 
 /** 一套的色板：按单品类别估计每种颜色的视觉面积，并说明配色方式 */
-export function outfitPalette(items: Item[]): OutfitPalette {
+export function outfitPalette(items: Item[], styling?: Styling): OutfitPalette {
+  const visible = visibleShare(items, styling);
   const map = new Map<string, PaletteSwatch & { lab: Lab }>();
   let total = 0;
   const add = (hex: string, name: string, w: number) => {
@@ -348,7 +371,7 @@ export function outfitPalette(items: Item[]): OutfitPalette {
   };
   for (const i of items) {
     if (i.category === 'jewelry') continue;
-    const w = COLOR_WEIGHT[i.category] ?? 0.3;
+    const w = (COLOR_WEIGHT[i.category] ?? 0.3) * visible(i);
     if (i.color2 && i.pattern !== 'solid') {
       add(i.color.hex, i.color.name, w * 0.6);
       add(i.color2.hex, i.color2.name, w * 0.4);
@@ -373,7 +396,7 @@ export function outfitPalette(items: Item[]): OutfitPalette {
   return { scheme, swatches: list.map(({ lab: _lab, ...s }) => s) };
 }
 
-function weatherPart(p: Prepared, items: Item[]): ScorePart {
+function weatherPart(p: Prepared, items: Item[], st: Styling): ScorePart {
   const w = p.weather;
   const t = w.tempC;
   const notes: Note[] = [];
@@ -381,8 +404,14 @@ function weatherPart(p: Prepared, items: Item[]): ScorePart {
   const base = byCat(items, 'top') ?? byCat(items, 'dress');
   const outer = byCat(items, 'outer');
   const scarf = byCat(items, 'scarf');
-  const insulation = (base?.warmth ?? 1) + (outer?.warmth ?? 0) + (scarf && scarf.warmth >= 2 ? 1 : 0);
+  // 敞开的外套挡风差一些
+  const outerOpen = !!outer && isOpen(outer, st);
+  const insulation = (base?.warmth ?? 1) + (outer ? outer.warmth * (outerOpen ? 0.6 : 1) : 0) + (scarf && scarf.warmth >= 2 ? 1 : 0);
   let score = 1;
+  if (outer && outerOpen && t < 8) {
+    score -= 0.15;
+    notes.push({ kind: 'warn', text: `${t}°C 很冷，${outer.name}拉上更保暖` });
+  }
   if (insulation < target.min) {
     score -= 0.3 * (target.min - insulation);
     notes.push({ kind: 'warn', text: `${t}°C 保暖不够，建议再加一层或换厚一点的` });
@@ -489,10 +518,15 @@ function bestStyleCompat(a: Style[], b: Style[]): number {
 }
 
 /** 版型轮廓：上下都宽松显得松垮，一松一紧更利落（身材目标里已有判断的情况不重复） */
-function silhouette(p: Prepared, items: Item[], notes: Note[]): number {
+function silhouette(p: Prepared, items: Item[], notes: Note[], st: Styling): number {
   const top = byCat(items, 'top');
   const bottom = byCat(items, 'bottom');
   if (!top?.fit || !bottom?.fit) return 0;
+  const tucked = isTucked(top, items, st);
+  if (top.fit === 'loose' && bottom.fit === 'loose' && tucked) {
+    notes.push({ kind: 'good', text: `${top.name}塞进下装，宽松但不拖沓` });
+    return 0.04;
+  }
   if (top.fit === 'loose' && bottom.fit === 'loose' && top.length !== 'short') {
     notes.push({ kind: 'info', text: '上下都宽松，可以把上衣塞进裤腰，或换一件收身的' });
     return -0.06;
@@ -506,7 +540,7 @@ function silhouette(p: Prepared, items: Item[], notes: Note[]): number {
   return 0;
 }
 
-function stylePart(p: Prepared, items: Item[]): ScorePart {
+function stylePart(p: Prepared, items: Item[], st: Styling): ScorePart {
   const pieces = items.filter((i) => (isMain(i) || i.category === 'shoes') && i.styles.length > 0);
   if (pieces.length < 2) return { score: 0.75, notes: [] };
   const notes: Note[] = [];
@@ -533,7 +567,7 @@ function stylePart(p: Prepared, items: Item[]): ScorePart {
     const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
     notes.push({ kind: 'good', text: `风格统一，整体偏${STYLE_LABELS[top]}` });
   }
-  return { score: clamp01(avg + silhouette(p, items, notes)), notes };
+  return { score: clamp01(avg + silhouette(p, items, notes, st)), notes };
 }
 
 /** 面料：透气和保暖是否合适、质感是否有对比、正式程度是否一致、皮具是否呼应 */
@@ -644,10 +678,13 @@ function materialPart(p: Prepared, items: Item[]): ScorePart {
   return { score: clamp01(s), notes };
 }
 
-function bodyPart(p: Prepared, items: Item[]): ScorePart {
+function bodyPart(p: Prepared, items: Item[], st: Styling): ScorePart {
   if (p.goals.length === 0) return { score: 0.75, notes: [] };
   const top = byCat(items, 'top');
   const bottom = byCat(items, 'bottom');
+  const tucked = !!top && isTucked(top, items, st);
+  const outerItem = byCat(items, 'outer');
+  const outerOpen = !!outerItem && isOpen(outerItem, st);
   const dress = byCat(items, 'dress');
   const belt = byCat(items, 'belt');
   const shoes = byCat(items, 'shoes');
@@ -672,7 +709,10 @@ function bodyPart(p: Prepared, items: Item[]): ScorePart {
           good('高腰线连衣裙拉长下半身');
         }
         if (top && bottom) {
-          if (top.length === 'short') {
+          if (tucked) {
+            s += top.length === 'long' ? 0.12 : 0.08;
+            good(`${top.name}塞进下装，腰线露出来，腿部显长`);
+          } else if (top.length === 'short') {
             s += 0.08;
             good('短款上衣露出腰线，腿部显长');
           } else if (top.length === 'long') {
@@ -683,6 +723,10 @@ function bodyPart(p: Prepared, items: Item[]): ScorePart {
         if (bottom && shoes && bottom.length !== 'short' && Math.abs(lightness(p, bottom) - lightness(p, shoes)) < 15) {
           s += 0.06;
           good('鞋裤颜色接近，腿部线条延伸');
+        }
+        if (outerOpen) {
+          s += 0.05;
+          good(`${outerItem!.name}敞开穿，形成竖向线条，显得修长`);
         }
         break;
       case 'balance_upper':
@@ -697,6 +741,10 @@ function bodyPart(p: Prepared, items: Item[]): ScorePart {
         if (top && bottom && lightness(p, top) < lightness(p, bottom) - 15) {
           s += 0.06;
           good('上深下浅，上身视觉收敛');
+        }
+        if (outerOpen) {
+          s += 0.05;
+          good(`${outerItem!.name}敞开，中间的竖线让上身显窄`);
         }
         break;
       case 'balance_lower':
@@ -723,12 +771,15 @@ function bodyPart(p: Prepared, items: Item[]): ScorePart {
           good('腰带强调腰线');
         }
         if (bottom?.rise === 'high' || dress?.rise === 'high') s += 0.08;
-        if (top && (top.length === 'short' || top.fit === 'slim')) {
+        if (tucked) {
+          s += 0.1;
+          good(`${top!.name}塞进下装，腰线清楚`);
+        } else if (top && (top.length === 'short' || top.fit === 'slim')) {
           s += 0.06;
           good('短款或修身上衣勾勒腰线');
         }
         if (dress?.fit === 'slim') s += 0.06;
-        if (top?.fit === 'loose' && top.length !== 'short' && bottom?.fit === 'loose' && !belt) {
+        if (top?.fit === 'loose' && top.length !== 'short' && bottom?.fit === 'loose' && !belt && !tucked) {
           s -= 0.18;
           warn('上下都宽松又没有腰带，腰线不明显');
         }
@@ -793,15 +844,16 @@ function feedbackPart(p: Prepared, items: Item[]): ScorePart {
 
 // ---------- 整体评估 ----------
 
-function evaluateWith(p: Prepared, items: Item[], skipWeather = false): OutfitEvaluation {
+function evaluateWith(p: Prepared, items: Item[], skipWeather = false, styling?: Styling): OutfitEvaluation {
   const sorted = sortByLayer(items);
+  const st = normalizeStyling(sorted, styling);
   const parts: Record<PartKey, ScorePart> = {
-    color: colorPart(p, sorted),
-    weather: skipWeather ? { score: 0.8, notes: [] } : weatherPart(p, sorted),
+    color: colorPart(p, sorted, st),
+    weather: skipWeather ? { score: 0.8, notes: [] } : weatherPart(p, sorted, st),
     occasion: occasionPart(p, sorted),
-    style: stylePart(p, sorted),
+    style: stylePart(p, sorted, st),
     material: materialPart(p, sorted),
-    body: bodyPart(p, sorted),
+    body: bodyPart(p, sorted, st),
     rotation: rotationPart(p, sorted),
     feedback: feedbackPart(p, sorted),
   };
@@ -809,12 +861,36 @@ function evaluateWith(p: Prepared, items: Item[], skipWeather = false): OutfitEv
   for (const k of PART_KEYS) total += WEIGHTS[k] * parts[k].score;
   const favBonus = Math.min(4, sorted.filter((i) => i.favorite && isMain(i)).length * 2);
   const score = Math.max(0, Math.min(100, Math.round(total * 100 + favBonus)));
-  return { items: sorted, score, parts, signature: signatureOf(sorted) };
+  return { items: sorted, score, parts, signature: signatureOf(sorted), styling: st };
 }
 
-/** 评估任意一组单品（试搭页使用） */
-export function evaluateOutfit(items: Item[], ctx: RecommendContext): OutfitEvaluation {
-  return evaluateWith(prepare(ctx), items);
+/** 试一下塞进去 / 敞开的各种组合，返回得分最高的穿法（同分时保持原样） */
+function withBestStyling(p: Prepared, items: Item[]): OutfitEvaluation {
+  const top = byCat(items, 'top');
+  const bottom = byCat(items, 'bottom');
+  const outer = byCat(items, 'outer');
+  const tuck = canTuck(top, bottom) ? [false, true] : [false];
+  const open = outer && canToggleOpen(outer) ? [false, true] : [false];
+  let best: OutfitEvaluation | null = null;
+  for (const tk of tuck) {
+    for (const op of open) {
+      const st: Styling = {};
+      if (tk) st.tucked = [top!.id];
+      if (op) st.open = [outer!.id];
+      const e = evaluateWith(p, items, false, st);
+      if (!best || e.score > best.score) best = e;
+    }
+  }
+  return best!;
+}
+
+/**
+ * 评估任意一组单品（试搭页使用）。
+ * styling 为 'auto' 时自动挑选得分最高的穿法；不传时按原样（不塞、不敞开）。
+ */
+export function evaluateOutfit(items: Item[], ctx: RecommendContext, styling?: Styling | 'auto'): OutfitEvaluation {
+  const p = prepare(ctx);
+  return styling === 'auto' ? withBestStyling(p, items) : evaluateWith(p, items, false, styling);
 }
 
 /** 汇总展示用的理由：优点在前，问题在后 */
@@ -1044,7 +1120,7 @@ function buildCandidates(p: Prepared, pool: Item[], exclude: Set<string>, pinned
   for (const c of withShoes.slice(0, 24)) {
     if (exclude.has(c.signature) || seen.has(c.signature)) continue;
     seen.add(c.signature);
-    result.push(addAccessories(p, c, pool, pinned));
+    result.push(withBestStyling(p, addAccessories(p, c, pool, pinned).items));
   }
   return result.sort((a, b) => b.score - a.score);
 }
@@ -1084,9 +1160,9 @@ export function swapAlternatives(current: Item[], category: Category, ctx: Recom
   const rest = current.filter((i) => i.category !== category);
   const currentIds = new Set(current.map((i) => i.id));
   const pool = ctx.items.filter((i) => i.category === category && !currentIds.has(i.id) && eligible(p, i, 2));
-  const out = pool.map((i) => evaluateWith(p, [...rest, i]));
+  const out = pool.map((i) => withBestStyling(p, [...rest, i]));
   const optional = category === 'outer' || ['bag', 'hat', 'scarf', 'belt', 'jewelry'].includes(category);
-  if (optional && current.some((i) => i.category === category)) out.push(evaluateWith(p, rest));
+  if (optional && current.some((i) => i.category === category)) out.push(withBestStyling(p, rest));
   return out.sort((a, b) => b.score - a.score);
 }
 

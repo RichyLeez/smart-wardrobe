@@ -84,6 +84,10 @@ export interface Item {
   images: ImageRefs;
   /** 换装贴图宽高比 w / h */
   imageAspect: number;
+  /** 外套能不能敞开穿（拉链、纽扣）；不填时按子类判断 */
+  openable?: boolean;
+  /** 照片里已经是敞开的（拍的时候没拉拉链），人台上总是敞开显示 */
+  photoOpen?: boolean;
   /** 背面贴图宽高比（有背面照片时） */
   backAspect?: number;
   createdAt: number;
@@ -138,11 +142,18 @@ export interface Placement {
   scale: number;
 }
 
+/** 穿法：哪件上衣塞进下装、哪件外套敞开穿（单品 id） */
+export interface Styling {
+  tucked?: string[];
+  open?: string[];
+}
+
 export interface Outfit {
   id: string;
   name: string;
   itemIds: string[];
   layout: Record<string, Placement>;
+  styling?: Styling;
   occasions: Occasion[];
   tags: string[];
   createdAt: number;
@@ -168,6 +179,7 @@ export interface WearRecord {
   itemSnapshots: ItemSnapshot[];
   outfitId?: string;
   layout?: Record<string, Placement>;
+  styling?: Styling;
   occasion?: Occasion;
   tempC?: number;
   note?: string;

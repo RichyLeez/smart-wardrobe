@@ -5,19 +5,22 @@ import { CATEGORIES, CATEGORY_LABELS, OCCASIONS, OCCASION_LABELS } from '../../c
 import { matchesFacets, selectionSize, type FacetSelection } from '../../core/facets';
 import type { ViewSide } from '../../core/body';
 import { evaluateOutfit, summarizeNotes, type RecommendContext } from '../../core/recommend';
-import type { Category, Item, Occasion, Outfit, Placement } from '../../core/types';
-import { ItemThumb, NoteList, PaletteBar, PartBars, ScoreTape } from '../components/Bits';
+import { normalizeStyling } from '../../core/styling';
+import type { Category, Item, Occasion, Outfit, Placement, Styling } from '../../core/types';
+import { ItemThumb, NoteList, PaletteBar, PartBars, ScoreTape, StylingChips } from '../components/Bits';
 import { ChipMulti, Sheet } from '../components/Controls';
 import { ActiveFacets, FacetSheet } from '../components/Facets';
 import { Icon } from '../components/Icon';
 import { Mannequin } from '../components/Mannequin';
 import { newId, useStore } from '../store';
 import { useUI } from '../ui';
-import { snapshotRecord } from './Today';
+import { snapshotRecord, stylingOrUndefined } from './Today';
 
 interface BuilderState {
   selected: Partial<Record<Category, string>>;
   layout: Record<string, Placement>;
+  /** 穿法：塞进去、敞开（换掉单品后不适用的部分自动失效） */
+  styling?: Styling;
   outfitId?: string;
   tab: Category;
 }
@@ -51,7 +54,7 @@ export function BuilderPage() {
       const it = store.items.find((i) => i.id === id);
       if (it) selected[it.category] = it.id;
     }
-    setState(() => ({ selected, layout: seed.layout ?? {}, outfitId: seed.outfitId, tab: 'top' }));
+    setState(() => ({ selected, layout: seed.layout ?? {}, styling: seed.styling, outfitId: seed.outfitId, tab: 'top' }));
     setSelectedId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ui.builderSeed]);
@@ -73,10 +76,14 @@ export function BuilderPage() {
     today: store.today.date,
     rotation: store.settings.rotation,
   };
+  const chosenKey = chosen.map((i) => i.id).join(',');
+  const stylingKey = JSON.stringify(state.styling ?? {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const styling = useMemo(() => normalizeStyling(chosen, state.styling), [chosenKey, stylingKey, store.items]);
   const evaluation = useMemo(
-    () => (chosen.length ? evaluateOutfit(chosen, ctx) : null),
+    () => (chosen.length ? evaluateOutfit(chosen, ctx, styling) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chosen.map((i) => i.id).join(','), store.items, store.today, store.goals, store.records, store.feedback, store.settings.rotation],
+    [chosenKey, styling, store.items, store.today, store.goals, store.records, store.feedback, store.settings.rotation],
   );
 
   function toggle(item: Item) {
@@ -119,6 +126,7 @@ export function BuilderPage() {
       name: saving.name.trim() || chosen.map((i) => i.name).join(' + '),
       itemIds: chosen.map((i) => i.id),
       layout: layoutForChosen(),
+      ...(stylingOrUndefined(styling) ? { styling } : {}),
       occasions: saving.occasions,
       tags: [],
       createdAt: !asNew && loadedOutfit ? loadedOutfit.createdAt : now,
@@ -137,6 +145,7 @@ export function BuilderPage() {
       date: store.today.date,
       outfitId: state.outfitId,
       layout: layoutForChosen(),
+      styling,
       occasion: store.today.occasion ?? undefined,
       tempC: store.today.weather.tempC,
       source: 'builder',
@@ -162,7 +171,7 @@ export function BuilderPage() {
       const it = store.items.find((i) => i.id === id);
       if (it) selected[it.category] = it.id;
     }
-    setState((s) => ({ ...s, selected, layout: { ...o.layout }, outfitId: o.id }));
+    setState((s) => ({ ...s, selected, layout: { ...o.layout }, styling: o.styling, outfitId: o.id }));
     setSelectedId(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -179,7 +188,7 @@ export function BuilderPage() {
             type="button"
             className="btn btn-small btn-ghost"
             onClick={() => {
-              setState((s) => ({ ...s, selected: {}, layout: {}, outfitId: undefined }));
+              setState((s) => ({ ...s, selected: {}, layout: {}, styling: undefined, outfitId: undefined }));
               setSelectedId(null);
             }}
           >
@@ -193,6 +202,7 @@ export function BuilderPage() {
             body={store.settings.body}
             items={chosen}
             layout={state.layout}
+            styling={styling}
             editable
             selectedId={selectedId}
             onSelect={setSelectedId}
@@ -223,7 +233,7 @@ export function BuilderPage() {
                   type="button"
                   className="stage-btn"
                   aria-label="3D 查看这套"
-                  onClick={() => ui.open({ kind: 'view3d', itemIds: chosen.map((i) => i.id), layout: state.layout, title: '试搭' })}
+                  onClick={() => ui.open({ kind: 'view3d', itemIds: chosen.map((i) => i.id), layout: state.layout, styling, title: '试搭' })}
                 >
                   3D
                 </button>
@@ -232,7 +242,8 @@ export function BuilderPage() {
           )}
         </div>
         {evaluation && <ScoreTape score={evaluation.score} />}
-        {evaluation && <PaletteBar items={chosen} />}
+        {evaluation && <PaletteBar items={chosen} styling={styling} />}
+        <StylingChips items={chosen} styling={styling} onChange={(st) => setState((s) => ({ ...s, styling: st }))} />
 
         {selItem && selPlacement ? (
           <div className="adjust">
@@ -357,7 +368,7 @@ export function BuilderPage() {
                 return (
                   <button key={o.id} type="button" className="outfit-card" onClick={() => loadOutfit(o)}>
                     <div className="stage">
-                      <Mannequin body={store.settings.body} items={its} layout={o.layout} label={o.name} />
+                      <Mannequin body={store.settings.body} items={its} layout={o.layout} styling={o.styling} label={o.name} />
                     </div>
                     <span>{o.name}</span>
                   </button>

@@ -196,7 +196,7 @@ function RecordCard({ record, items, onEdit, onDelete }: { record: WearRecord; i
         <img className="photo" src={photo} alt="上身照片" />
       ) : (
         <div className="stage">
-          <Mannequin body={store.settings.body} items={its} layout={record.layout} />
+          <Mannequin body={store.settings.body} items={its} layout={record.layout} styling={record.styling} />
         </div>
       )}
       <div>
@@ -220,7 +220,7 @@ function RecordCard({ record, items, onEdit, onDelete }: { record: WearRecord; i
               type="button"
               className="btn btn-small"
               aria-label="3D 查看这天的穿搭"
-              onClick={() => ui.open({ kind: 'view3d', itemIds: its.map((i) => i.id), layout: record.layout, title: record.date })}
+              onClick={() => ui.open({ kind: 'view3d', itemIds: its.map((i) => i.id), layout: record.layout, styling: record.styling, title: record.date })}
             >
               3D
             </button>

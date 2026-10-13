@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { CATEGORIES, CATEGORY_LABELS, OCCASIONS, OCCASION_LABELS } from '../../core/catalog';
+import { normalizeStyling } from '../../core/styling';
 import type { Item, Occasion, WearRecord } from '../../core/types';
 import { ItemThumb } from '../components/Bits';
 import { ChipSelect, Field } from '../components/Controls';
@@ -9,6 +10,7 @@ import { Icon } from '../components/Icon';
 import { canvasToBlob, loadPhoto } from '../imageTools';
 import { newId, useImageUrl, useStore, type NewImage } from '../store';
 import { useUI, type RecordDraft } from '../ui';
+import { stylingOrUndefined } from './Today';
 
 export function RecordEditor({ draft }: { draft: RecordDraft }) {
   const store = useStore();
@@ -68,6 +70,8 @@ export function RecordEditor({ draft }: { draft: RecordDraft }) {
         ],
         outfitId: existing?.outfitId ?? draft.outfitId,
         layout: existing?.layout ?? draft.layout,
+        // 换了单品后不再适用的穿法（例如去掉了下装）自动去掉
+        styling: stylingOrUndefined(normalizeStyling(chosen, existing?.styling ?? draft.styling)),
         occasion: occasion ?? undefined,
         tempC: t !== undefined && Number.isFinite(t) ? t : undefined,
         note: note.trim() || undefined,

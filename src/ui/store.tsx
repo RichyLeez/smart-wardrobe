@@ -18,7 +18,7 @@ import type {
 } from '../core/types';
 import * as db from '../storage/db';
 import { renderDemoImage } from './demo';
-import { FLAT_PREFIX, renderFlat } from './flatImage';
+import { FLAT_PREFIX, OPEN_PREFIX, renderFlat, renderOpen } from './flatImage';
 import { newId } from './ids';
 
 export { newId };
@@ -112,6 +112,11 @@ async function resolveImage(id: string): Promise<{ url: string; revoke: boolean 
     if (!base) return undefined;
     return { url: URL.createObjectURL(await renderFlat(base)), revoke: true };
   }
+  if (id.startsWith(OPEN_PREFIX)) {
+    const base = await loadImageUrl(id.slice(OPEN_PREFIX.length));
+    if (!base) return undefined;
+    return { url: URL.createObjectURL(await renderOpen(base)), revoke: true };
+  }
   if (db.isVirtualImage(id)) {
     const blob = await renderDemoImage(id);
     return blob ? { url: URL.createObjectURL(blob), revoke: true } : undefined;
@@ -140,7 +145,7 @@ export function loadImageUrl(id: string): Promise<string | undefined> {
 }
 
 function forgetImages(ids: string[]): void {
-  for (const id of ids.flatMap((x) => [x, FLAT_PREFIX + x])) {
+  for (const id of ids.flatMap((x) => [x, FLAT_PREFIX + x, OPEN_PREFIX + x, FLAT_PREFIX + OPEN_PREFIX + x])) {
     const u = urlCache.get(id);
     if (u && revocable.has(id)) URL.revokeObjectURL(u);
     revocable.delete(id);

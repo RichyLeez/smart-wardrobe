@@ -1,7 +1,7 @@
 // 界面层状态：当前标签页、全屏覆盖层、提示条和确认框。
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { Occasion, Placement, RecordSource, WearRecord } from '../core/types';
+import type { Occasion, Placement, RecordSource, Styling, WearRecord } from '../core/types';
 import { Sheet } from './components/Controls';
 
 export type Tab = 'today' | 'wardrobe' | 'builder' | 'records';
@@ -11,6 +11,7 @@ export interface RecordDraft {
   record?: WearRecord;
   itemIds?: string[];
   layout?: Record<string, Placement>;
+  styling?: Styling;
   outfitId?: string;
   occasion?: Occasion | null;
   tempC?: number;
@@ -22,7 +23,7 @@ export type Overlay = (
   | { kind: 'item'; id: string | null }
   | { kind: 'record'; draft: RecordDraft }
   | { kind: 'settings' }
-  | { kind: 'view3d'; itemIds: string[]; layout?: Record<string, Placement>; title?: string }
+  | { kind: 'view3d'; itemIds: string[]; layout?: Record<string, Placement>; styling?: Styling; title?: string }
   | { kind: 'match'; itemId: string }
 ) & {
   /** 每次打开时生成，用作组件 key，保证重新打开时是全新状态 */
@@ -32,6 +33,7 @@ export type Overlay = (
 export interface BuilderSeed {
   itemIds: string[];
   layout?: Record<string, Placement>;
+  styling?: Styling;
   outfitId?: string;
 }
 

@@ -169,7 +169,7 @@ function Shell() {
         {overlay?.kind === 'record' && <RecordEditor key={overlay.nonce} draft={overlay.draft} />}
         {overlay?.kind === 'settings' && <SettingsPage />}
         {overlay?.kind === 'match' && <MatchPage key={overlay.nonce} itemId={overlay.itemId} />}
-        {overlay?.kind === 'view3d' && <Viewer3D key={overlay.nonce} itemIds={overlay.itemIds} layout={overlay.layout} title={overlay.title} />}
+        {overlay?.kind === 'view3d' && <Viewer3D key={overlay.nonce} itemIds={overlay.itemIds} layout={overlay.layout} styling={overlay.styling} title={overlay.title} />}
       </ErrorBoundary>
     </>
   );

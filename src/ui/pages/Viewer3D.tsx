@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { hiddenFromBack } from '../../core/body';
-import type { GarmentLook, Item, Placement } from '../../core/types';
+import type { GarmentLook, Item, Placement, Styling } from '../../core/types';
 import { Segmented } from '../components/Controls';
 import { Icon } from '../components/Icon';
 import { Mannequin3D } from '../components/Mannequin3D';
@@ -14,7 +14,17 @@ export const LOOK_LABELS: Record<GarmentLook, string> = { flat: '简化图形', 
 /** 拍背面有意义的类别 */
 const BACK_MATTERS = new Set(['top', 'bottom', 'dress', 'outer']);
 
-export function Viewer3D({ itemIds, layout, title }: { itemIds: string[]; layout?: Record<string, Placement>; title?: string }) {
+export function Viewer3D({
+  itemIds,
+  layout,
+  styling,
+  title,
+}: {
+  itemIds: string[];
+  layout?: Record<string, Placement>;
+  styling?: Styling;
+  title?: string;
+}) {
   const store = useStore();
   const ui = useUI();
   const items = useMemo(
@@ -36,7 +46,7 @@ export function Viewer3D({ itemIds, layout, title }: { itemIds: string[]; layout
           {items.length === 0 ? (
             <p className="muted">这套里的单品已经被删除了。</p>
           ) : (
-            <Mannequin3D body={store.settings.body} items={items} layout={layout} />
+            <Mannequin3D body={store.settings.body} items={items} layout={layout} styling={styling} />
           )}
           <div className="look-row">
             <span className="small muted">衣服显示为</span>

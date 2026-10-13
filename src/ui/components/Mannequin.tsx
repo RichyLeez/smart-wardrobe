@@ -4,8 +4,9 @@
 import { useMemo, useRef } from 'react';
 import { DEFAULT_BODY, garmentView, hiddenFromBack, mannequinGeometry, mannequinShapes, type ViewSide } from '../../core/body';
 import { sortByLayer } from '../../core/recommend';
-import type { BodyProfile, Item, Placement } from '../../core/types';
-import { flatId } from '../flatImage';
+import { drawOrder, isOpen, isTucked, tuckLine } from '../../core/styling';
+import type { BodyProfile, Item, Placement, Styling } from '../../core/types';
+import { flatId, openId } from '../flatImage';
 import { useImageUrls, useStore } from '../store';
 
 interface Props {
@@ -20,18 +21,44 @@ interface Props {
   label?: string;
   /** 看正面还是背面；背面不能拖动调整 */
   side?: ViewSide;
+  /** 穿法：上衣塞进下装、外套敞开 */
+  styling?: Styling;
 }
 
-export function Mannequin({ body, items, layout, editable: editableProp, selectedId, onSelect, onMove, animate, label, side = 'front' }: Props) {
+let clipSeq = 0;
+
+export function Mannequin({ body, items, layout, editable: editableProp, selectedId, onSelect, onMove, animate, label, side = 'front', styling }: Props) {
   const b = body ?? DEFAULT_BODY;
   const editable = editableProp && side === 'front';
   const geom = useMemo(() => mannequinGeometry(b), [b]);
   const shapes = useMemo(() => mannequinShapes(geom), [geom]);
-  const sorted = useMemo(() => sortByLayer(items).filter((i) => side === 'front' || !hiddenFromBack(i)), [items, side]);
-  const views = useMemo(() => new Map(sorted.map((i) => [i.id, garmentView(i, geom, side, layout?.[i.id])])), [sorted, geom, side, layout]);
+  const sorted = useMemo(
+    () => drawOrder(sortByLayer(items), styling).filter((i) => side === 'front' || !hiddenFromBack(i)),
+    [items, side, styling],
+  );
+  const views = useMemo(
+    () =>
+      new Map(
+        sorted.map((i) => {
+          const v = garmentView(i, geom, side, layout?.[i.id]);
+          // 敞开穿：正面用拉开后的图（照片本身就是敞开的除外）
+          if (side === 'front' && isOpen(i, styling) && !i.photoOpen) return [i.id, { ...v, image: openId(v.image), closed: v.image as string | undefined }];
+          return [i.id, { ...v, closed: undefined as string | undefined }];
+        }),
+      ),
+    [sorted, geom, side, layout, styling],
+  );
+  const clipId = useRef(`tuck-${++clipSeq}`).current;
+  const tuckedTop = sorted.find((i) => isTucked(i, sorted, styling));
+  const bottomItem = sorted.find((i) => i.category === 'bottom');
+  const clipY = tuckedTop && bottomItem ? tuckLine(views.get(bottomItem.id)!.rect) : null;
   // 默认显示去掉褶皱的简化图形；图形还没生成好时先显示照片
   const flat = (useStore().settings.garmentLook ?? 'flat') === 'flat';
-  const photoIds = sorted.map((i) => views.get(i.id)!.image);
+  // 拉开的外套图生成好之前先显示合上的样子
+  const photoIds = sorted.flatMap((i) => {
+    const v = views.get(i.id)!;
+    return v.closed ? [v.image, v.closed] : [v.image];
+  });
   const urls = useImageUrls(flat ? [...photoIds, ...photoIds.map(flatId)] : photoIds);
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ id: string; x: number; y: number; start: Placement; pointerId: number } | null>(null);
@@ -85,14 +112,25 @@ export function Mannequin({ body, items, layout, editable: editableProp, selecte
       <path className="form-arm" d={shapes.armRight} />
       <path className="form-fill" d={shapes.body} />
       <ellipse className="form-fill" cx={shapes.head.cx} cy={shapes.head.cy} rx={shapes.head.rx} ry={shapes.head.ry} />
+      {clipY !== null && (
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={vb.x - 100} y={vb.y - 100} width={vb.width + 200} height={clipY - vb.y + 100} />
+          </clipPath>
+        </defs>
+      )}
       {sorted.map((item, idx) => {
         const v = views.get(item.id)!;
-        const url = (flat ? urls[flatId(v.image)] : undefined) ?? urls[v.image];
+        const pick = (id: string) => (flat ? urls[flatId(id)] : undefined) ?? urls[id];
+        const url = pick(v.image) ?? (v.closed ? pick(v.closed) : undefined);
         if (!url) return null;
         const r = v.rect;
+        // 塞进去的上衣在裤腰以下截断
+        const clip = clipY !== null && item === tuckedTop ? `url(#${clipId})` : undefined;
         const image = (
           <image
             className="garment"
+            data-styling={clip ? 'tucked' : isOpen(item, styling) ? 'open' : undefined}
             href={url}
             x={r.x}
             y={r.y}
@@ -105,11 +143,13 @@ export function Mannequin({ body, items, layout, editable: editableProp, selecte
         );
         // 镜像放在外层分组上，避免和入场动画的 transform 冲突
         return v.mirrored ? (
-          <g key={item.id} transform={`translate(${2 * (r.x + r.width / 2)} 0) scale(-1 1)`}>
-            {image}
+          <g key={item.id} clipPath={clip}>
+            <g transform={`translate(${2 * (r.x + r.width / 2)} 0) scale(-1 1)`}>{image}</g>
           </g>
         ) : (
-          <g key={item.id}>{image}</g>
+          <g key={item.id} clipPath={clip}>
+            {image}
+          </g>
         );
       })}
       {editable && selectedRect && (

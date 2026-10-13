@@ -12,10 +12,10 @@ import {
   type RecommendContext,
 } from '../../core/recommend';
 import { idleItems, wearStats } from '../../core/stats';
-import type { Category, Item, Occasion, WearRecord } from '../../core/types';
+import type { Category, Item, Occasion, Styling, WearRecord } from '../../core/types';
 import { representativeTemp, warmthTarget, weatherCodeLabel } from '../../core/weather';
 import { isHosted } from '../../storage/hosted';
-import { ItemThumb, NoteList, PaletteBar, PartBars, ScoreTape } from '../components/Bits';
+import { ItemThumb, NoteList, PaletteBar, PartBars, ScoreTape, StylingChips } from '../components/Bits';
 import { ChipSelect, Sheet } from '../components/Controls';
 import { Icon } from '../components/Icon';
 import { Mannequin } from '../components/Mannequin';
@@ -33,12 +33,19 @@ function dateTitle(date: string): string {
   return `${m}月${d}日 ${WEEKDAYS[wd]}`;
 }
 
+/** 有内容时才返回穿法，避免在记录里存空对象 */
+export function stylingOrUndefined(s: Styling | undefined): Styling | undefined {
+  return s && (s.tucked?.length || s.open?.length) ? s : undefined;
+}
+
 export function snapshotRecord(items: Item[], base: Omit<WearRecord, 'itemIds' | 'itemSnapshots'>): WearRecord {
-  return {
+  const rec: WearRecord = {
     ...base,
     itemIds: items.map((i) => i.id),
     itemSnapshots: items.map((i) => ({ id: i.id, name: i.name, category: i.category, colorHex: i.color.hex })),
   };
+  if (!stylingOrUndefined(rec.styling)) delete rec.styling;
+  return rec;
 }
 
 export function TodayPage() {
@@ -47,7 +54,8 @@ export function TodayPage() {
   const { items, records, feedback, settings, today, goals } = store;
   const [seed, setSeed] = useState<number | undefined>(undefined);
   const [exclude, setExclude] = useState<string[]>([]);
-  const [overrides, setOverrides] = useState<Record<number, Item[]>>({});
+  // 某一套换过单品或改过穿法：items 为这一套的单品，styling 为 'auto' 时由引擎决定穿法
+  const [overrides, setOverrides] = useState<Record<number, { items: Item[]; styling: Styling | 'auto' }>>({});
   const [active, setActive] = useState(0);
   const [showParts, setShowParts] = useState(false);
   const [swapFor, setSwapFor] = useState<{ slide: number; category: Category } | null>(null);
@@ -79,8 +87,11 @@ export function TodayPage() {
     setOverrides({});
   }, [result]);
 
-  const outfits: OutfitEvaluation[] = result.outfits.map((o, i) => (overrides[i] ? evaluateOutfit(overrides[i], ctx) : o));
-  const current = outfits[Math.min(active, outfits.length - 1)];
+  const outfits: OutfitEvaluation[] = result.outfits.map((o, i) =>
+    overrides[i] ? evaluateOutfit(overrides[i].items, ctx, overrides[i].styling) : o,
+  );
+  const currentIndex = Math.min(active, outfits.length - 1);
+  const current = outfits[currentIndex];
   const todayRecords = records.filter((r) => r.date === today.date);
   const worn = todayRecords[0];
   const wornItems = worn ? worn.itemIds.map((id) => items.find((i) => i.id === id)).filter((i): i is Item => !!i) : [];
@@ -172,6 +183,7 @@ export function TodayPage() {
       date: today.date,
       occasion: today.occasion ?? undefined,
       tempC: today.weather.tempC,
+      styling: o.styling,
       source: 'recommend',
       createdAt: now,
       updatedAt: now,
@@ -310,14 +322,16 @@ export function TodayPage() {
             </h2>
             <div className="record" style={{ marginTop: 0 }}>
               <div className="stage">
-                <Mannequin body={settings.body} items={wornItems} layout={worn.layout} />
+                <Mannequin body={settings.body} items={wornItems} layout={worn.layout} styling={worn.styling} />
                 {wornItems.length > 0 && (
                   <div className="stage-tools">
                     <button
                       type="button"
                       className="stage-btn"
                       aria-label="3D 查看今天的穿搭"
-                      onClick={() => ui.open({ kind: 'view3d', itemIds: wornItems.map((i) => i.id), layout: worn.layout, title: '今天的穿搭' })}
+                      onClick={() =>
+                        ui.open({ kind: 'view3d', itemIds: wornItems.map((i) => i.id), layout: worn.layout, styling: worn.styling, title: '今天的穿搭' })
+                      }
                     >
                       3D
                     </button>
@@ -349,13 +363,13 @@ export function TodayPage() {
                   {outfits.map((o, i) => (
                     <div className="slide" key={`${o.signature}-${i}`} aria-label={`方案 ${i + 1}，${o.score} 分`}>
                       <div className="stage">
-                        <Mannequin body={settings.body} items={o.items} animate />
+                        <Mannequin body={settings.body} items={o.items} styling={o.styling} animate />
                         <div className="stage-tools">
                           <button
                             type="button"
                             className="stage-btn"
                             aria-label={`3D 查看方案 ${i + 1}`}
-                            onClick={() => ui.open({ kind: 'view3d', itemIds: o.items.map((x) => x.id), title: `方案 ${i + 1}` })}
+                            onClick={() => ui.open({ kind: 'view3d', itemIds: o.items.map((x) => x.id), styling: o.styling, title: `方案 ${i + 1}` })}
                           >
                             3D
                           </button>
@@ -393,8 +407,14 @@ export function TodayPage() {
                   ))}
                 </div>
 
+                <StylingChips
+                  items={current.items}
+                  styling={current.styling}
+                  onChange={(st) => setOverrides((ov) => ({ ...ov, [currentIndex]: { items: current.items, styling: st } }))}
+                />
+
                 <section className="section" style={{ marginTop: 14 }}>
-                  <PaletteBar items={current.items} />
+                  <PaletteBar items={current.items} styling={current.styling} />
                   <NoteList notes={summarizeNotes(current)} />
                   <button type="button" className="btn btn-ghost btn-small" style={{ paddingLeft: 0, marginTop: 6 }} onClick={() => setShowParts((v) => !v)} aria-expanded={showParts}>
                     {showParts ? '收起评分明细' : '查看评分明细'}
@@ -414,7 +434,7 @@ export function TodayPage() {
                     type="button"
                     className="btn"
                     aria-label="去试搭里调整"
-                    onClick={() => ui.sendToBuilder({ itemIds: current.items.map((i) => i.id) })}
+                    onClick={() => ui.sendToBuilder({ itemIds: current.items.map((i) => i.id), styling: stylingOrUndefined(current.styling) })}
                   >
                     调整
                   </button>
@@ -550,7 +570,7 @@ export function TodayPage() {
                     type="button"
                     className="alt"
                     onClick={() => {
-                      setOverrides((o) => ({ ...o, [swapFor.slide]: alt.items }));
+                      setOverrides((o) => ({ ...o, [swapFor.slide]: { items: alt.items, styling: 'auto' } }));
                       setSwapFor(null);
                     }}
                   >

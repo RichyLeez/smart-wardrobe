@@ -34,7 +34,9 @@ import {
 } from '../../core/catalog';
 import { PALETTE, extractColors, suggestColors, type ColorSuggestion } from '../../core/color';
 import { backImageIds } from '../../core/backup';
+import { detectHanger, removeMasked } from '../../core/hanger';
 import { smartCut } from '../../core/smartcut';
+import { defaultOpenable } from '../../core/styling';
 import { analyzeSizeFit } from '../../core/sizefit';
 import { wearStats } from '../../core/stats';
 import { hasUsefulInfo, parseTagText, type TagParse } from '../../core/tag';
@@ -114,6 +116,10 @@ interface Draft {
   tagFit?: Fit;
   tags: string;
   favorite: boolean;
+  /** 外套能否敞开穿；undefined 表示按子类判断 */
+  openable?: boolean;
+  /** 外套照片拍的时候就是敞开的 */
+  photoOpen: boolean;
 }
 
 interface TagState {
@@ -148,6 +154,8 @@ function draftFromItem(i: Item): Draft {
     tagFit: i.tagInfo?.fit,
     tags: i.tags.join('，'),
     favorite: i.favorite,
+    openable: i.openable,
+    photoOpen: !!i.photoOpen,
   };
 }
 
@@ -168,6 +176,7 @@ const EMPTY_DRAFT: Draft = {
   size: '',
   tags: '',
   favorite: false,
+  photoOpen: false,
 };
 
 /** 选定子类时套用常用默认值（保暖度、季节、场合、风格、版型、长度、腰线） */
@@ -216,6 +225,8 @@ export function ItemEditor({ id }: { id: string | null }) {
   const [tool, setTool] = useState<Tool>('none');
   const [brush, setBrush] = useState(18);
   const [noRemoval, setNoRemoval] = useState(false);
+  /** 认出的"衣架"其实是衣服的一部分时，用户可以保留 */
+  const [keepHanger, setKeepHanger] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   /** 正在拍的是正面还是背面 */
@@ -274,6 +285,7 @@ export function ItemEditor({ id }: { id: string | null }) {
         override: new Uint8Array(photo.rgba.width * photo.rgba.height),
       });
       setNoRemoval((smart ?? res).coverage > 0.97);
+      setKeepHanger(false);
       setTool('none');
       setStep('cutout');
     } catch (e) {
@@ -317,16 +329,22 @@ export function ItemEditor({ id }: { id: string | null }) {
     if (work) void recompute(work, m);
   }
 
+  // 挂着拍的衣服：自动去背后衣架常和衣服连在一起，找出挂钩和伸出肩外的横杆
+  const workAuto = work?.auto;
+  const hanger = useMemo(() => (work && workAuto ? detectHanger(workAuto, work.rgba) : null), [workAuto]);
+
   const currentAlpha = (w: Work) => {
     if (noRemoval) return new Uint8Array(w.auto.length).fill(255);
-    return combineMask(w.auto, w.override);
+    // 先去掉衣架，再叠加手动笔刷（"恢复"笔刷涂到的地方以笔刷为准）
+    const auto = hanger?.found && !keepHanger ? removeMasked(w.auto, hanger.mask) : w.auto;
+    return combineMask(auto, w.override);
   };
 
   useEffect(() => {
     if (step !== 'cutout' || !work || !canvasRef.current) return;
     renderMaskPreview(canvasRef.current, work.rgba, currentAlpha(work));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, work, noRemoval]);
+  }, [step, work, noRemoval, hanger, keepHanger]);
 
   function paintAt(e: React.PointerEvent<HTMLCanvasElement>) {
     const c = canvasRef.current;
@@ -596,6 +614,8 @@ export function ItemEditor({ id }: { id: string | null }) {
           .map((t) => t.trim())
           .filter(Boolean),
         favorite: draft.favorite,
+        openable: draft.category === 'outer' && !draft.photoOpen ? draft.openable : undefined,
+        photoOpen: draft.category === 'outer' && draft.photoOpen ? true : undefined,
         status: existing?.status ?? 'active',
         images: imageRefs!,
         imageAspect: aspect,
@@ -734,6 +754,8 @@ export function ItemEditor({ id }: { id: string | null }) {
                 <li>深色衣物配浅色背景，浅色衣物配深色背景，背景越纯越好（床单、地板、纸板都可以）。</li>
                 <li>光线均匀，避免强烈阴影和反光。</li>
                 <li>上衣和外套尽量把袖子摆开，换装时更像穿在身上。</li>
+                <li>挂在衣架上拍也可以，挂钩和横杆会自动去掉。</li>
+                <li>外套拉好拉链拍，搭配时可以选择敞开或合上；没拉拉链拍的，录入时打开「照片里是敞开的」。</li>
               </ul>
               )}
               {side === 'back' ? (
@@ -771,6 +793,14 @@ export function ItemEditor({ id }: { id: string | null }) {
                 {busy && <div className="busy">{busy}</div>}
               </div>
               <Switch label="不去背，保留原图" checked={noRemoval} onChange={setNoRemoval} hint="背景太杂时可以先保留原图，换装时会显示为矩形照片" />
+              {!noRemoval && hanger?.found && (
+                <Switch
+                  label="去掉衣架"
+                  checked={!keepHanger}
+                  onChange={(v) => setKeepHanger(!v)}
+                  hint="照片里有衣架，领口上方的挂钩和伸出肩膀外的横杆已经自动去掉。如果去掉的其实是衣服本身（比如挂脖带子），关掉就会保留。"
+                />
+              )}
               {!noRemoval && (
                 <>
                   <Field label="去背方式">
@@ -1174,6 +1204,25 @@ export function ItemEditor({ id }: { id: string | null }) {
               <Field label="保暖度">
                 <Segmented<Warmth> options={[1, 2, 3]} value={draft.warmth} labels={WARMTH_LABELS} onChange={(v) => set({ warmth: v })} />
               </Field>
+
+              {cat === 'outer' && (
+                <div className="field">
+                  <Switch
+                    label="照片里是敞开的"
+                    checked={draft.photoOpen}
+                    onChange={(v) => set({ photoOpen: v })}
+                    hint="拍的时候没拉拉链、没扣扣子。人台上会一直敞开显示，中间露出的里衬可以在去背时用「擦除」去掉。"
+                  />
+                  {!draft.photoOpen && (
+                    <Switch
+                      label="可以敞开穿"
+                      checked={draft.openable ?? defaultOpenable('outer', draft.subtype ?? '')}
+                      onChange={(v) => set({ openable: v })}
+                      hint="有拉链或纽扣的外套。搭配时可以选「外套敞开」，人台上会把门襟拉开。"
+                    />
+                  )}
+                </div>
+              )}
 
               {app?.fit && (
                 <Field label="版型" hint={draft.size.trim() ? '你穿上的效果' : undefined}>

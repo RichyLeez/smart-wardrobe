@@ -56,6 +56,8 @@ precision mediump float;
 uniform sampler2D uFront;
 uniform sampler2D uBack;
 uniform float uHasBack;
+uniform float uBackBlur;
+uniform float uMinY;
 varying vec3 vPos;
 varying vec3 vN;
 varying vec2 vUvF;
@@ -64,10 +66,18 @@ varying float vSide;
 ${SHADE}
 bool outside(vec2 uv) { return uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0; }
 void main() {
+  // 塞进下装的上衣：腰头以下不画
+  if (vPos.y < uMinY) discard;
   vec4 c;
   if (vSide > 0.5) {
     if (outside(vUvF)) discard;
     c = texture2D(uFront, vUvF);
+  } else if (uHasBack > 0.5 && uBackBlur > 0.5) {
+    // 背面借用合上的正面照片（敞开的外套没有背面照片时），模糊掉正面细节
+    if (outside(vUvB)) discard;
+    vec4 a = texture2D(uBack, vUvB);
+    vec4 b = texture2D(uBack, vUvB, 3.5);
+    c = vec4(b.rgb / max(b.a, 0.004) * a.a, a.a);
   } else if (uHasBack > 0.5) {
     if (outside(vUvB)) discard;
     c = texture2D(uBack, vUvB);
@@ -143,12 +153,18 @@ export interface GarmentDraw {
   mesh: MeshData;
   front: TexImageSource;
   back?: TexImageSource;
+  /** back 其实是正面照片，需要模糊 */
+  backBlur?: boolean;
+  /** 低于这个高度（世界坐标 Y）不画 */
+  minY?: number;
 }
 
 interface GpuGarment {
   mesh: GpuMesh;
   front: WebGLTexture;
   back?: WebGLTexture;
+  backBlur: boolean;
+  minY: number;
 }
 
 // ---------- 矩阵 ----------
@@ -274,7 +290,7 @@ export class Renderer3D {
     const attrs = ['aPos', 'aNormal', 'aColor', 'aUvF', 'aUvB', 'aSide'];
     const common = ['uViewProj', 'uEye', 'uKey', 'uFill'];
     this.solid = compile(gl, VERT, FRAG_SOLID, attrs, common);
-    this.garment = compile(gl, VERT, FRAG_GARMENT, attrs, [...common, 'uFront', 'uBack', 'uHasBack']);
+    this.garment = compile(gl, VERT, FRAG_GARMENT, attrs, [...common, 'uFront', 'uBack', 'uHasBack', 'uBackBlur', 'uMinY']);
     this.shadow = compile(gl, VERT_SHADOW, FRAG_SHADOW, ['aXY'], ['uViewProj', 'uSize', 'uInk']);
     this.shadowBuf = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.shadowBuf);
@@ -355,6 +371,8 @@ export class Renderer3D {
       mesh: this.upload(g.mesh),
       front: this.texture(g.front),
       back: g.back ? this.texture(g.back) : undefined,
+      backBlur: !!g.backBlur,
+      minY: g.minY ?? -1e6,
     }));
     this.requestRender();
   }
@@ -476,6 +494,8 @@ export class Renderer3D {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, g.back ?? g.front);
         gl.uniform1f(this.garment.uni.uHasBack, g.back ? 1 : 0);
+        gl.uniform1f(this.garment.uni.uBackBlur, g.backBlur ? 1 : 0);
+        gl.uniform1f(this.garment.uni.uMinY, g.minY);
         this.bind(this.garment, g.mesh);
         gl.drawElements(gl.TRIANGLES, g.mesh.count, gl.UNSIGNED_SHORT, 0);
       }

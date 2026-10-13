@@ -7,10 +7,11 @@ import { body3d, bodyMesh, type Body3D } from '../../core/body3d';
 import { outfitShells, shoeMesh, type AlphaGrid, type RGB, type ShellInput } from '../../core/garment3d';
 import { hexToRgb } from '../../core/color';
 import { sortByLayer } from '../../core/recommend';
-import type { BodyProfile, Item, Placement } from '../../core/types';
+import { drawOrder, isOpen, isTucked, tuckLine } from '../../core/styling';
+import type { BodyProfile, Item, Placement, Styling } from '../../core/types';
 import { Renderer3D, cssColor, type GarmentDraw } from '../gl3d';
 import { createCanvas, loadImageElement } from '../imageTools';
-import { flatId } from '../flatImage';
+import { flatId, openId } from '../flatImage';
 import { loadImageUrl, useStore } from '../store';
 import { Mannequin } from './Mannequin';
 
@@ -77,20 +78,31 @@ interface Built {
   shoes: ReturnType<typeof shoeMesh> | null;
 }
 
-async function buildScene(model: Body3D, items: Item[], layout: Record<string, Placement> | undefined, flat: boolean): Promise<Built> {
+async function buildScene(
+  model: Body3D,
+  items: Item[],
+  layout: Record<string, Placement> | undefined,
+  flat: boolean,
+  styling: Styling | undefined,
+): Promise<Built> {
   const loadImage = (id: string) => loadImageById(flat ? flatId(id) : id);
-  const sorted = sortByLayer(items);
+  // 塞进去的上衣排在下装里面，下装会把它包住
+  const sorted = drawOrder(sortByLayer(items), styling);
+  const bottomItem = sorted.find((i) => i.category === 'bottom');
   let shoes: Built['shoes'] = null;
   const inputs: ShellInput[] = [];
-  const textures: Array<{ front: HTMLCanvasElement; back?: HTMLCanvasElement }> = [];
+  const textures: Array<{ front: HTMLCanvasElement; back?: HTMLCanvasElement; backBlur?: boolean; minY?: number }> = [];
   const loaded = await Promise.all(
     sorted.map(async (item) => {
-      const front = await loadImage(item.images.cutout);
+      const opened = isOpen(item, styling) && !item.photoOpen;
+      const front = await loadImage(opened ? openId(item.images.cutout) : item.images.cutout);
       const back = item.category !== 'shoes' && item.images.backCutout ? await loadImage(item.images.backCutout) : null;
-      return { item, front, back };
+      // 敞开的外套没有背面照片时，背面用合上的正面照片，免得背后也开个口
+      const closedFront = opened && !back ? await loadImage(item.images.cutout) : null;
+      return { item, front, back, closedFront };
     }),
   );
-  for (const { item, front, back } of loaded) {
+  for (const { item, front, back, closedFront } of loaded) {
     if (item.category === 'shoes') {
       const colors = shoeColors(maskOf(front), item.color.hex);
       shoes = shoeMesh(model, item.subtype, colors.upper, colors.sole);
@@ -98,14 +110,23 @@ async function buildScene(model: Body3D, items: Item[], layout: Record<string, P
     }
     const fv = garmentView(item, model.g, 'front', layout?.[item.id]);
     const bv = garmentView(item, model.g, 'back', layout?.[item.id]);
+    const backImg = back ?? closedFront;
+    const tucked = isTucked(item, sorted, styling) && bottomItem;
+    const clipBelow = tucked ? tuckLine(garmentView(bottomItem, model.g, 'front', layout?.[bottomItem.id]).rect) : undefined;
     inputs.push({
       category: item.category,
       subtype: item.subtype,
       front: { rect: fv.rect, mask: maskOf(front).mask },
-      back: back ? { rect: bv.rect, mask: maskOf(back).mask } : undefined,
+      back: backImg ? { rect: bv.rect, mask: maskOf(backImg).mask } : undefined,
       layer: inputs.length,
+      clipBelow,
     });
-    textures.push({ front: textureCanvas(front), back: back ? textureCanvas(back) : undefined });
+    textures.push({
+      front: textureCanvas(front),
+      back: backImg ? textureCanvas(backImg) : undefined,
+      backBlur: !back && !!closedFront,
+      minY: clipBelow !== undefined ? model.g.height - clipBelow : undefined,
+    });
   }
   const meshes = outfitShells(model, inputs);
   return { garments: meshes.map((mesh, i) => ({ mesh, ...textures[i] })), shoes };
@@ -115,9 +136,10 @@ interface Props {
   body: BodyProfile | null;
   items: Item[];
   layout?: Record<string, Placement>;
+  styling?: Styling;
 }
 
-export function Mannequin3D({ body, items, layout }: Props) {
+export function Mannequin3D({ body, items, layout, styling }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rRef = useRef<Renderer3D | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'nogl' | 'error'>('loading');
@@ -184,7 +206,7 @@ export function Mannequin3D({ body, items, layout }: Props) {
     if (!r) return;
     let alive = true;
     setStatus('loading');
-    buildScene(model, items, layout, flat)
+    buildScene(model, items, layout, flat, styling)
       .then((scene) => {
         if (!alive || rRef.current !== r) return;
         r.setShoes(scene.shoes);
@@ -195,7 +217,7 @@ export function Mannequin3D({ body, items, layout }: Props) {
     return () => {
       alive = false;
     };
-  }, [model, items, layout, flat]);
+  }, [model, items, layout, flat, styling]);
 
   useEffect(() => {
     if (auto) rRef.current?.requestRender();
@@ -254,7 +276,7 @@ export function Mannequin3D({ body, items, layout }: Props) {
     return (
       <div className="view3d">
         <div className="view3d-canvas">
-          <Mannequin body={body} items={items} layout={layout} side={side2d} />
+          <Mannequin body={body} items={items} layout={layout} styling={styling} side={side2d} />
         </div>
         <p className="small muted view3d-note">这台设备的浏览器不支持 3D 显示，先用平面人台看正面和背面。</p>
         <div className="view3d-controls">
