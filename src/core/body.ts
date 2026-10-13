@@ -353,9 +353,29 @@ export interface GarmentRect {
   y: number;
   width: number;
   height: number;
+  /** 这条线（y）以上不画：连帽上衣摊开的帽子，穿着时垂在背后 */
+  clipTop?: number;
 }
 
-type PlaceableItem = Pick<Item, 'category' | 'subtype' | 'length' | 'rise' | 'imageAspect'>;
+type PlaceableItem = Pick<Item, 'category' | 'subtype' | 'length' | 'rise' | 'imageAspect' | 'hoodTop' | 'hoodUp'>;
+
+/** 连帽上衣：试穿时放下的帽子占图片高度的比例（只对上衣、外套有效） */
+export function hoodOf(item: PlaceableItem): number {
+  if (item.category !== 'top' && item.category !== 'outer') return 0;
+  if (item.hoodUp) return 0;
+  const t = item.hoodTop ?? 0;
+  return t > 0 && t < 0.5 ? t : 0;
+}
+
+/** 按去掉帽子后的部分摆好位置，再把图片往上补回帽子那一段（藏起来不画） */
+function withHood(item: PlaceableItem, place: (aspect: number) => GarmentRect): GarmentRect {
+  const t = hoodOf(item);
+  if (!t) return place(item.imageAspect);
+  const a = item.imageAspect > 0 && Number.isFinite(item.imageAspect) ? item.imageAspect : 1;
+  const r = place(a / (1 - t));
+  const height = r.height / (1 - t);
+  return { x: r.x, y: r.y - height * t, width: r.width, height, clipTop: r.y };
+}
 
 /** 按目标高度放置，宽度由图片宽高比决定，再限制在合理范围内 */
 function fitRect(
@@ -395,13 +415,13 @@ export function placeGarment(item: PlaceableItem, g: MannequinGeometry): Garment
       const top = g.shoulderY - H * 0.022;
       const hem =
         item.length === 'short' ? g.waistY + H * 0.01 : item.length === 'long' ? g.crotchY + H * 0.06 : g.crotchY - H * 0.015;
-      return fitRect(a, 0, top, hem - top, shoulderW * 1.0, shoulderW * 2.5);
+      return withHood(item, (aa) => fitRect(aa, 0, top, hem - top, shoulderW * 1.0, shoulderW * 2.5));
     }
     case 'outer': {
       const top = g.shoulderY - H * 0.028;
       const hem =
         item.length === 'short' ? g.waistY + H * 0.05 : item.length === 'long' ? g.kneeY + H * 0.03 : g.crotchY + H * 0.035;
-      return fitRect(a, 0, top, hem - top, shoulderW * 1.08, shoulderW * 2.7);
+      return withHood(item, (aa) => fitRect(aa, 0, top, hem - top, shoulderW * 1.08, shoulderW * 2.7));
     }
     case 'dress': {
       const top = g.shoulderY - H * 0.015;
@@ -462,7 +482,9 @@ export function applyPlacement(rect: GarmentRect, p?: Placement): GarmentRect {
   const cy = rect.y + rect.height / 2 + p.dy;
   const w = rect.width * p.scale;
   const h = rect.height * p.scale;
-  return { x: cx - w / 2, y: cy - h / 2, width: w, height: h };
+  const out: GarmentRect = { x: cx - w / 2, y: cy - h / 2, width: w, height: h };
+  if (rect.clipTop !== undefined) out.clipTop = cy + (rect.clipTop - (rect.y + rect.height / 2)) * p.scale;
+  return out;
 }
 
 // ---------- 正面 / 背面 ----------

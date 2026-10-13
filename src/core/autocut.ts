@@ -19,6 +19,9 @@ import { fillGarmentGaps, type GapResult } from './gaps';
 import { guessCategory, type CategoryGuess } from './guess';
 import { binarize, erode, maskBox } from './mask';
 import { detectHanger, removeMasked, type HangerResult } from './hanger';
+import { frameContact, type FrameContact } from './frame';
+import { hoodTop } from './hood';
+import { alphaOf, uprightPiece } from './orient';
 import { splitPieces } from './pieces';
 import { smartCut } from './smartcut';
 
@@ -150,19 +153,44 @@ export function autoCut(img: RGBAImage, options: { mode?: CutMode; multi?: boole
 
 export interface FinishedPiece {
   box: BBox;
-  /** 裁到衣物边界、背景透明的图 */
+  /** 裁到衣物边界、背景透明、已经转正的图 */
   cropped: RGBAImage;
   colors: ColorSuggestion | null;
   guess: CategoryGuess | null;
   lowContrast: boolean;
+  /** 转正时顺时针转了多少度 */
+  angle: number;
+  /** 连帽上衣：帽子占贴图高度的比例（没有帽子为 0） */
+  hood: number;
+  /** 衣服碰到的照片边缘 */
+  frame: FrameContact;
 }
 
-/** 一件的收尾：裁切、取色、猜类别、判断是否和背景太接近 */
+/** 一件的收尾：裁切、取色、转正、猜类别、量帽子、判断是否和背景太接近、有没有碰到照片边缘 */
 export function finishPiece(img: RGBAImage, alpha: Uint8Array, bg: BackgroundEstimate, gaps?: GapResult): FinishedPiece | null {
   const box = alphaBBox(alpha, img.width, img.height);
   if (!box || box.width < 8 || box.height < 8) return null;
-  const cropped = applyMaskAndCrop(img, alpha, box);
-  const colors = suggestColors(extractColors(cropped.data, 4));
-  const guess = guessCategory(alpha, img.width, img.height, colors?.primary.hex);
-  return { box, cropped, colors, guess, lowContrast: isLowContrast(img, alpha, bg, gaps) };
+  const raw = applyMaskAndCrop(img, alpha, box);
+  const colors = suggestColors(extractColors(raw.data, 4));
+  const up = uprightPiece(raw);
+  const cropped = up.image;
+  const upAlpha = alphaOf(cropped);
+  const hood = hoodTop(upAlpha, cropped.width, cropped.height);
+  // 猜类别时不看摊开的帽子（帽子会让上半部分显得比衣身窄，认不出袖子）
+  let shape = upAlpha;
+  if (hood > 0) {
+    shape = new Uint8Array(upAlpha);
+    shape.fill(0, 0, Math.round(cropped.height * hood) * cropped.width);
+  }
+  const guess = guessCategory(shape, cropped.width, cropped.height, colors?.primary.hex);
+  return {
+    box,
+    cropped,
+    colors,
+    guess,
+    lowContrast: isLowContrast(img, alpha, bg, gaps),
+    angle: up.angle,
+    hood,
+    frame: frameContact(img, alpha),
+  };
 }

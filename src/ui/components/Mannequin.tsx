@@ -141,14 +141,20 @@ export function Mannequin({ body, items, layout, editable: editableProp, selecte
             onPointerDown={editable ? (e: React.PointerEvent<SVGImageElement>) => onPointerDown(e, item.id) : undefined}
           />
         );
+        // 连帽上衣：摊开的帽子穿着时垂在背后，藏起来
+        const hoodId = r.clipTop !== undefined ? `${clipId}-hood-${idx}` : null;
+        const inner = v.mirrored ? <g transform={`translate(${2 * (r.x + r.width / 2)} 0) scale(-1 1)`}>{image}</g> : image;
         // 镜像放在外层分组上，避免和入场动画的 transform 冲突
-        return v.mirrored ? (
+        return (
           <g key={item.id} clipPath={clip}>
-            <g transform={`translate(${2 * (r.x + r.width / 2)} 0) scale(-1 1)`}>{image}</g>
-          </g>
-        ) : (
-          <g key={item.id} clipPath={clip}>
-            {image}
+            {hoodId && (
+              <defs>
+                <clipPath id={hoodId}>
+                  <rect x={vb.x - 100} y={r.clipTop} width={vb.width + 200} height={vb.height + 200} />
+                </clipPath>
+              </defs>
+            )}
+            {hoodId ? <g clipPath={`url(#${hoodId})`}>{inner}</g> : inner}
           </g>
         );
       })}

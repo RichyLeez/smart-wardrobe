@@ -35,7 +35,10 @@ import {
 import { PALETTE, extractColors, suggestColors, type ColorSuggestion } from '../../core/color';
 import { backImageIds } from '../../core/backup';
 import { cleanupCut, isLowContrast } from '../../core/autocut';
+import { frameContact, frameContactText } from '../../core/frame';
 import { removeMasked } from '../../core/hanger';
+import { alphaOf, rotateImage, uprightPiece } from '../../core/orient';
+import { hoodTop } from '../../core/hood';
 import { smartCut } from '../../core/smartcut';
 import { colorPlus } from '../../core/pending';
 import { defaultOpenable } from '../../core/styling';
@@ -87,10 +90,25 @@ function hasStrokes(o: Uint8Array): boolean {
 }
 
 interface Prepared {
-  cutout: HTMLCanvasElement;
+  /** 去背、转正、裁好的图 */
+  base: RGBAImage;
+  /** 用户手动再顺时针转了几个 90° */
+  turns: number;
   archive: HTMLCanvasElement;
-  aspect: number;
   colors: ColorSuggestion | null;
+}
+
+/** 最终的换装贴图：按手动转的角度转好 */
+interface Composed {
+  cutout: HTMLCanvasElement;
+  aspect: number;
+  /** 连帽上衣：帽子占贴图高度的比例 */
+  hood: number;
+}
+
+function compose(p: Prepared): Composed {
+  const img = p.turns ? rotateImage(p.base, p.turns * 90) : p.base;
+  return { cutout: scaleCanvas(rgbaToCanvas(img), 640), aspect: img.width / img.height, hood: hoodTop(alphaOf(img), img.width, img.height) };
 }
 
 interface Draft {
@@ -123,6 +141,8 @@ interface Draft {
   openable?: boolean;
   /** 外套照片拍的时候就是敞开的 */
   photoOpen: boolean;
+  /** 试穿时不放下帽子 */
+  hoodUp: boolean;
 }
 
 interface TagState {
@@ -159,6 +179,7 @@ function draftFromItem(i: Item): Draft {
     favorite: i.favorite,
     openable: i.openable,
     photoOpen: !!i.photoOpen,
+    hoodUp: !!i.hoodUp,
   };
 }
 
@@ -180,6 +201,7 @@ const EMPTY_DRAFT: Draft = {
   tags: '',
   favorite: false,
   photoOpen: false,
+  hoodUp: false,
 };
 
 /** 选定子类时套用常用默认值（保暖度、季节、场合、风格、版型、长度、腰线） */
@@ -256,8 +278,13 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
   const albumRef = useRef<HTMLInputElement>(null);
   const painting = useRef(false);
   const frame = useRef(0);
-  const preview = useMemo(() => (prepared ? prepared.cutout.toDataURL() : null), [prepared]);
-  const backPreview = useMemo(() => (preparedBack ? preparedBack.cutout.toDataURL() : null), [preparedBack]);
+  const composed = useMemo(() => (prepared ? compose(prepared) : null), [prepared]);
+  /** 帽子占贴图高度的比例：换了照片按新贴图量，否则用存着的 */
+  const hoodMeasured = composed ? composed.hood : existing?.hoodTop;
+  const hoodFrac = hoodMeasured ?? 0;
+  const composedBack = useMemo(() => (preparedBack ? compose(preparedBack) : null), [preparedBack]);
+  const preview = useMemo(() => (composed ? composed.cutout.toDataURL() : null), [composed]);
+  const backPreview = useMemo(() => (composedBack ? composedBack.cutout.toDataURL() : null), [composedBack]);
   const hasExistingBack = !!existing?.images.backCutout && !removeBack;
   const stats = existing ? wearStats(store.records).get(existing.id) : undefined;
 
@@ -370,6 +397,12 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
     if (hanger?.found && !keepHanger) auto = removeMasked(auto, hanger.mask);
     return combineMask(auto, w.override);
   };
+  // 衣服有没有碰到照片边缘（碰到的部分会被当成背景去掉）
+  const edgeContact = useMemo(
+    () => (work && cleaned && !noRemoval ? frameContact(work.rgba, cleaned.filled) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cleaned, noRemoval],
+  );
   // 按补回后的结果判断（关掉补回开关时提示也不消失）
   const lowContrast = useMemo(
     () => (work && cleaned && !noRemoval ? isLowContrast(work.rgba, cleaned.filled, work.bg, cleaned.gaps) : false),
@@ -423,9 +456,10 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
         return;
       }
       const cropped = applyMaskAndCrop(work.rgba, alpha, box);
-      const cutoutCanvas = scaleCanvas(rgbaToCanvas(cropped), 640);
+      // 横着、倒着拍的转成领口朝上
+      const up = noRemoval ? { image: cropped, angle: 0 } : uprightPiece(cropped);
       if (side === 'back') {
-        setPreparedBack({ cutout: cutoutCanvas, archive: work.archive, aspect: cropped.width / cropped.height, colors: null });
+        setPreparedBack({ base: up.image, turns: 0, archive: work.archive, colors: null });
         setRemoveBack(false);
         setSide('front');
         setStep('info');
@@ -433,20 +467,14 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
         return;
       }
       const colors = suggestColors(extractColors(cropped.data, 4));
-      const cutout = cutoutCanvas;
-      setPrepared({ cutout, archive: work.archive, aspect: cropped.width / cropped.height, colors });
-      if (colors) {
-        setDraft((d) => {
-          const color = { hex: colors.primary.hex, name: colors.primary.name };
-          const color2 = colors.multiColor && colors.secondary ? { ...colors.secondary } : undefined;
-          return {
-            ...d,
-            color,
-            color2,
-            name: d.nameTouched ? d.name : autoName(color.name, d.subtype),
-          };
-        });
-      }
+      setPrepared({ base: up.image, turns: 0, archive: work.archive, colors });
+      setDraft((d) => {
+        if (!colors) return d;
+        const color = { hex: colors.primary.hex, name: colors.primary.name };
+        const color2 = colors.multiColor && colors.secondary ? { ...colors.secondary } : undefined;
+        return { ...d, color, color2, name: d.nameTouched ? d.name : autoName(color.name, d.subtype) };
+      });
+      if (up.angle && Math.abs(up.angle) >= 45) ui.toast('已经把照片转正了，方向不对可以点「转 90°」');
       setStep('info');
     } finally {
       setBusy(null);
@@ -593,31 +621,31 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
       let imageRefs = existing?.images;
       let aspect = existing?.imageAspect ?? 1;
       const replaced: string[] = [];
-      if (prepared) {
+      if (prepared && composed) {
         const cutoutId = newId('img-');
         const thumbId = newId('img-');
         const originalId = newId('img-');
-        const thumb = scaleCanvas(prepared.cutout, 280);
-        images.push({ id: cutoutId, blob: await transparentBlob(prepared.cutout), width: prepared.cutout.width, height: prepared.cutout.height });
+        const thumb = scaleCanvas(composed.cutout, 280);
+        images.push({ id: cutoutId, blob: await transparentBlob(composed.cutout), width: composed.cutout.width, height: composed.cutout.height });
         images.push({ id: thumbId, blob: await transparentBlob(thumb), width: thumb.width, height: thumb.height });
         images.push({ id: originalId, blob: await canvasToBlob(prepared.archive, 'image/jpeg', 0.85), width: prepared.archive.width, height: prepared.archive.height });
         if (existing) replaced.push(existing.images.cutout, existing.images.thumb, ...(existing.images.original ? [existing.images.original] : []));
         // 只换正面时保留原来的背面
         imageRefs = { ...imageRefs, cutout: cutoutId, thumb: thumbId, original: originalId };
-        aspect = prepared.aspect;
+        aspect = composed.aspect;
       }
       let backAspect = existing?.backAspect;
-      if (preparedBack) {
+      if (preparedBack && composedBack) {
         const cutoutId = newId('img-');
         const thumbId = newId('img-');
         const originalId = newId('img-');
-        const thumb = scaleCanvas(preparedBack.cutout, 280);
-        images.push({ id: cutoutId, blob: await transparentBlob(preparedBack.cutout), width: preparedBack.cutout.width, height: preparedBack.cutout.height });
+        const thumb = scaleCanvas(composedBack.cutout, 280);
+        images.push({ id: cutoutId, blob: await transparentBlob(composedBack.cutout), width: composedBack.cutout.width, height: composedBack.cutout.height });
         images.push({ id: thumbId, blob: await transparentBlob(thumb), width: thumb.width, height: thumb.height });
         images.push({ id: originalId, blob: await canvasToBlob(preparedBack.archive, 'image/jpeg', 0.85), width: preparedBack.archive.width, height: preparedBack.archive.height });
         if (existing) replaced.push(...backImageIds(existing));
         imageRefs = { ...imageRefs!, backCutout: cutoutId, backThumb: thumbId, backOriginal: originalId };
-        backAspect = preparedBack.aspect;
+        backAspect = composedBack.aspect;
       } else if (removeBack && existing) {
         replaced.push(...backImageIds(existing));
         imageRefs = { ...imageRefs!, backCutout: undefined, backThumb: undefined, backOriginal: undefined };
@@ -653,6 +681,9 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
         favorite: draft.favorite,
         openable: draft.category === 'outer' && !draft.photoOpen ? draft.openable : undefined,
         photoOpen: draft.category === 'outer' && draft.photoOpen ? true : undefined,
+        // 换了照片按这次的贴图量帽子；没换照片时沿用原来的（旧单品在打开时补量）
+        hoodTop: hoodMeasured !== undefined ? Math.round(hoodMeasured * 1000) / 1000 : undefined,
+        hoodUp: hoodFrac > 0 && draft.hoodUp ? true : undefined,
         // 待整理的单品保存即确认
         status: existing && existing.status !== 'pending' ? existing.status : 'active',
         images: imageRefs!,
@@ -788,10 +819,11 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                 </ul>
               ) : (
               <ul className="tips">
-                <li>衣物平铺，完整入镜，四周留一点空白。</li>
+                <li>衣物平铺，完整入镜，四周都要露出一截背景。碰到照片边缘的部分会被去掉。</li>
+                <li>横着拍、倒着拍都可以，会自动转成领口朝上。</li>
                 <li>深色衣物配浅色背景，浅色衣物配深色背景，背景越纯越好（床单、地板、纸板都可以）。</li>
                 <li>光线均匀，避免强烈阴影和反光。</li>
-                <li>上衣和外套尽量把袖子摆开，换装时更像穿在身上。</li>
+                <li>上衣和外套尽量把袖子摆开，换装时更像穿在身上。连帽的衣服把帽子摊在领口上方，试穿时会自动放下。</li>
                 <li>挂在衣架上拍也可以，挂钩和横杆会自动去掉。</li>
                 <li>白色或带白边、白字的衣服，用深色床单或地板当背景。</li>
                 <li>外套拉好拉链拍，搭配时可以选择敞开或合上；没拉拉链拍的，录入时打开「照片里是敞开的」。</li>
@@ -837,6 +869,11 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                 {busy && <div className="busy">{busy}</div>}
               </div>
               <Switch label="不去背，保留原图" checked={noRemoval} onChange={setNoRemoval} hint="背景太杂时可以先保留原图，换装时会显示为矩形照片" />
+              {!noRemoval && edgeContact && edgeContact.sides.length > 0 && (
+                <div className="warnbox" role="status">
+                  {frameContactText(edgeContact.sides)}，碰到边缘的部分会被当成背景去掉，下摆或袖口可能缺了一块。往后退一点，让衣服四周都露出背景，再点「重拍」。
+                </div>
+              )}
               {!noRemoval && lowContrast && (
                 <div className="warnbox">
                   衣服上有和背景很接近的颜色。{gapsFound ? '中间被挖掉的已经按衣服形状补回来了；' : ''}边上的（领口、袖口、白鞋底）如果被去掉了，选「恢复」沿着它涂一笔。下次换深色背景拍会准很多。
@@ -931,14 +968,26 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                 </div>
               )}
               <div className="row" style={{ alignItems: 'flex-start', gap: 14, marginBottom: 6 }}>
-                <div style={{ width: 104, height: 128, flex: 'none' }}>
-                  {preview ? (
-                    <div className="thumb fill">
-                      <img src={preview} alt="" />
-                    </div>
-                  ) : existing ? (
-                    <ItemThumb item={existing} className="fill" />
-                  ) : null}
+                <div style={{ width: 104, flex: 'none', display: 'grid', gap: 6 }}>
+                  <div style={{ height: 128 }}>
+                    {preview ? (
+                      <div className="thumb fill">
+                        <img src={preview} alt="换装贴图" />
+                      </div>
+                    ) : existing ? (
+                      <ItemThumb item={existing} className="fill" />
+                    ) : null}
+                  </div>
+                  {prepared && (
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      onClick={() => setPrepared((p) => (p ? { ...p, turns: (p.turns + 1) % 4 } : p))}
+                    >
+                      <Icon name="refresh" />
+                      转 90°
+                    </button>
+                  )}
                 </div>
                 <div className="grow" style={{ display: 'grid', gap: 8 }}>
                   <label className="small muted" htmlFor="item-name">
@@ -1009,6 +1058,15 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                       <Icon name="camera" />
                       {backPreview || backThumbId ? '换一张背面' : '拍背面'}
                     </button>
+                    {preparedBack && (
+                      <button
+                        type="button"
+                        className="btn btn-small"
+                        onClick={() => setPreparedBack((p) => (p ? { ...p, turns: (p.turns + 1) % 4 } : p))}
+                      >
+                        转 90°
+                      </button>
+                    )}
                     {(backPreview || backThumbId) && (
                       <button
                         type="button"
@@ -1210,6 +1268,20 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                     allowEmpty={false}
                   />
                 </Field>
+              )}
+              {hoodFrac > 0 && (cat === 'top' || cat === 'outer') && (
+                <div className="field">
+                  <Switch
+                    label="试穿时把帽子放下"
+                    checked={!draft.hoodUp}
+                    onChange={(v) => set({ hoodUp: !v })}
+                    hint={
+                      draft.hoodUp
+                        ? '人台上会显示照片里摊开的帽子。'
+                        : '照片里摊开的帽子在人台上藏起来，衣服按肩线对齐。认错了（例如是高领、立领）就关掉。'
+                    }
+                  />
+                </div>
               )}
 
               <Field label="颜色" hint={prepared?.colors ? '从照片自动识别' : undefined}>

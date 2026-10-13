@@ -25,8 +25,13 @@ async function loadImageById(id: string): Promise<HTMLImageElement> {
   return loadImageElement(url);
 }
 
+/** 图片或画布（连帽上衣去掉帽子后是画布） */
+type Pic = HTMLImageElement | HTMLCanvasElement;
+const picSize = (img: Pic) =>
+  img instanceof HTMLImageElement ? { w: img.naturalWidth || 1, h: img.naturalHeight || 1 } : { w: img.width || 1, h: img.height || 1 };
+
 /** 贴图统一缩放到 512×512（WebGL1 只有 2 的幂尺寸才能生成多级纹理） */
-function textureCanvas(img: HTMLImageElement): HTMLCanvasElement {
+function textureCanvas(img: Pic): HTMLCanvasElement {
   const c = createCanvas(512, 512);
   const ctx = c.getContext('2d');
   if (ctx) {
@@ -36,9 +41,8 @@ function textureCanvas(img: HTMLImageElement): HTMLCanvasElement {
   return c;
 }
 
-function maskOf(img: HTMLImageElement, maxSide = 160): { mask: AlphaGrid; data: Uint8ClampedArray } {
-  const w0 = img.naturalWidth || 1;
-  const h0 = img.naturalHeight || 1;
+function maskOf(img: Pic, maxSide = 160): { mask: AlphaGrid; data: Uint8ClampedArray } {
+  const { w: w0, h: h0 } = picSize(img);
   const s = maxSide / Math.max(w0, h0);
   const c = createCanvas(Math.max(4, w0 * s), Math.max(4, h0 * s));
   const ctx = c.getContext('2d', { willReadFrequently: true })!;
@@ -73,6 +77,16 @@ function shoeColors(m: { mask: AlphaGrid; data: Uint8ClampedArray }, fallback: s
   return { upper: avg(acc[0]), sole: avg(acc[1]) };
 }
 
+/** 把图片上面这一段（占高度的比例）变透明 */
+function trimTop(img: Pic, frac: number): HTMLCanvasElement {
+  const { w, h } = picSize(img);
+  const c = createCanvas(w, h);
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(img, 0, 0);
+  ctx.clearRect(0, 0, c.width, Math.round(c.height * Math.max(0, Math.min(1, frac))));
+  return c;
+}
+
 interface Built {
   garments: GarmentDraw[];
   shoes: ReturnType<typeof shoeMesh> | null;
@@ -102,7 +116,11 @@ async function buildScene(
       return { item, front, back, closedFront };
     }),
   );
-  for (const { item, front, back, closedFront } of loaded) {
+  for (const loadedItem of loaded) {
+    const { item } = loadedItem;
+    let front: Pic = loadedItem.front;
+    let back: Pic | null = loadedItem.back;
+    let closedFront: Pic | null = loadedItem.closedFront;
     if (item.category === 'shoes') {
       const colors = shoeColors(maskOf(front), item.color.hex);
       shoes = shoeMesh(model, item.subtype, colors.upper, colors.sole);
@@ -110,6 +128,14 @@ async function buildScene(
     }
     const fv = garmentView(item, model.g, 'front', layout?.[item.id]);
     const bv = garmentView(item, model.g, 'back', layout?.[item.id]);
+    // 连帽上衣：帽子那一段去掉（穿着时垂在背后），衣服按肩线对齐
+    if (fv.rect.clipTop !== undefined) {
+      const cut = (img: Pic | null, rect: { y: number; height: number; clipTop?: number }) =>
+        img && rect.clipTop !== undefined ? trimTop(img, (rect.clipTop - rect.y) / rect.height) : img;
+      front = cut(front, fv.rect) ?? front;
+      back = cut(back, bv.rect);
+      closedFront = cut(closedFront, fv.rect);
+    }
     const backImg = back ?? closedFront;
     const tucked = isTucked(item, sorted, styling) && bottomItem;
     const clipBelow = tucked ? tuckLine(garmentView(bottomItem, model.g, 'front', layout?.[bottomItem.id]).rect) : undefined;

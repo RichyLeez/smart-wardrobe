@@ -62,6 +62,8 @@ export async function processPhoto(file: Blob, multi: boolean): Promise<BatchPie
       images: { cutout: ids.cutout, thumb: ids.thumb, original: ids.original },
       aspect: done.cropped.width / done.cropped.height,
       lowContrast: done.lowContrast,
+      hoodTop: done.hood,
+      frameSides: done.frame.sides,
       now: stamp(),
     });
     out.push({ item, images, preview: scaleCanvas(thumb, 120).toDataURL('image/png') });

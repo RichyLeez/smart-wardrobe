@@ -3,6 +3,7 @@
 // 全部是纯函数。
 
 import { CATEGORY_LABELS, FIELD_APPLICABILITY, defaultsFor } from './catalog';
+import { frameContactText, type FrameSide } from './frame';
 import type { CategoryGuess } from './guess';
 import type { Category, ColorInfo, ImageRefs, Item } from './types';
 
@@ -59,12 +60,19 @@ export function draftPendingItem(input: {
   aspect: number;
   lowContrast: boolean;
   now: number;
+  /** 连帽上衣的帽子占贴图高度的比例 */
+  hoodTop?: number;
+  /** 衣服碰到的照片边缘 */
+  frameSides?: FrameSide[];
 }): Item {
   const category: Category = input.guess?.category ?? 'top';
   const subtype = input.guess?.subtype ?? '';
   const notes: string[] = [];
   if (!input.guess) notes.push('没认出类别，请选一下');
   else if (!subtype) notes.push(`看着像${CATEGORY_LABELS[category]}（${input.guess.reason}），请选具体款式`);
+  if (input.frameSides?.length) {
+    notes.push(`${frameContactText(input.frameSides)}，那一侧可能缺了一块，可以退后一点重拍`);
+  }
   if (input.lowContrast) notes.push('衣服上有和背景很接近的颜色，去背可能不准，可以点「细改」检查');
   const base: Item = {
     id: input.id,
@@ -83,6 +91,7 @@ export function draftPendingItem(input: {
     status: 'pending',
     images: input.images,
     imageAspect: input.aspect,
+    hoodTop: input.hoodTop !== undefined ? Math.round(input.hoodTop * 1000) / 1000 : undefined,
     createdAt: input.now,
     updatedAt: input.now,
   };

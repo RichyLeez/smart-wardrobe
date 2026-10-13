@@ -89,6 +89,10 @@ export interface Item {
   openable?: boolean;
   /** 照片里已经是敞开的（拍的时候没拉拉链），人台上总是敞开显示 */
   photoOpen?: boolean;
+  /** 连帽上衣：贴图最上面这一段（占图片高度的比例）是摊开的帽子，试穿时放下（人台上藏起来、按肩线对齐） */
+  hoodTop?: number;
+  /** 试穿时不放下帽子（帽子认错了，例如高领、立领） */
+  hoodUp?: boolean;
   /** 背面贴图宽高比（有背面照片时） */
   backAspect?: number;
   createdAt: number;

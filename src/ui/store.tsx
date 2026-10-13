@@ -4,6 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { itemImageIds } from '../core/backup';
 import { suggestGoals } from '../core/body';
+import { hoodTop } from '../core/hood';
 import { emptyFeedback } from '../core/recommend';
 import { todayStr } from '../core/stats';
 import type {
@@ -20,6 +21,7 @@ import * as db from '../storage/db';
 import { renderDemoImage } from './demo';
 import { FLAT_PREFIX, OPEN_PREFIX, renderFlat, renderOpen } from './flatImage';
 import { newId } from './ids';
+import { createCanvas, loadImageElement } from './imageTools';
 
 export { newId };
 
@@ -276,6 +278,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('visibilitychange', onVisibility);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storage?.mode]);
+
+  // 以前录入的上衣、外套还没量过帽子：打开后在后台补量一次（量过的记为数字，没帽子记 0）
+  const hoodsMeasured = useRef(false);
+  useEffect(() => {
+    if (!ready || hoodsMeasured.current) return;
+    hoodsMeasured.current = true;
+    const todo = latest.current.items.filter(
+      (i) => (i.category === 'top' || i.category === 'outer') && i.hoodTop === undefined && !db.isVirtualImage(i.images.cutout),
+    );
+    if (!todo.length) return;
+    (async () => {
+      for (const item of todo) {
+        const url = await loadImageUrl(item.images.cutout);
+        if (!url) continue;
+        const img = await loadImageElement(url);
+        const c = createCanvas(img.naturalWidth, img.naturalHeight);
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        if (!ctx) continue;
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, c.width, c.height).data;
+        const alpha = new Uint8Array(c.width * c.height);
+        for (let i = 0; i < alpha.length; i++) alpha[i] = d[i * 4 + 3];
+        const t = Math.round(hoodTop(alpha, c.width, c.height) * 1000) / 1000;
+        // 这期间用户可能改过这件，以最新的为准，只补上帽子
+        const cur = latest.current.items.find((i) => i.id === item.id);
+        if (!cur || cur.hoodTop !== undefined) continue;
+        const next = { ...cur, hoodTop: t };
+        await db.put('items', next);
+        setData((dd) => ({ ...dd, items: dd.items.map((i) => (i.id === next.id ? next : i)) }));
+        await new Promise((r) => setTimeout(r, 30));
+      }
+    })().catch(() => undefined);
+  }, [ready]);
 
   const goals = useMemo<BodyGoal[]>(() => {
     const s = data.settings;

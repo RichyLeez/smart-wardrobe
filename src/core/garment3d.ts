@@ -214,6 +214,8 @@ export interface SleeveTube {
     hw: number;
     hwT: number;
     b: number;
+    /** 往上补到肩头的那几圈：贴图取袖子最上面一圈的位置 */
+    srcY?: number;
   }>;
   /** 照片坐标处是否属于这只袖子 */
   isSleeve: (x: number, y: number) => boolean;
@@ -550,6 +552,17 @@ export function shellGrid(m: Body3D, input: ShellInput, innerLayers?: InnerLayer
       }
       rings.push({ y, c, cSrc, hw, hwT, b });
     }
+    // 袖子顶端比肩头低（垂着拍的袖子、补画的袖子从肩点往下才分开）：往上补到肩头，免得露出一截手臂
+    const first = rings[0];
+    const capTop = g.shoulderY - H * 0.004;
+    if (first && first.y - capTop > 1.6) {
+      const cap: SleeveTube['rings'] = [];
+      for (let y = capTop; y < first.y - 0.4; y += 0.8) {
+        const as = arm.section(Math.max(arm.y0 + 1, Math.min(arm.y1 - 1, y)));
+        cap.push({ ...first, y, c: as.cx, srcY: first.y });
+      }
+      rings.unshift(...cap);
+    }
     const edge = info.edge;
     const last = info.last;
     const isSleeve = (x: number, y: number): boolean => {
@@ -656,7 +669,7 @@ function sleeveTubeMesh(mb: MeshBuilder, H: number, input: ShellInput, tube: Sle
     // 圆筒宽度对应照片里袖子宽度（略往里收，边缘不透明，前后两半在侧面合上）
     const xPre = ring.cSrc + ((x - ring.c) * Math.max(0.3, ring.hw - 0.35)) / ring.hwT;
     const u = side * xPre - pvx;
-    const v = ring.y - pvy;
+    const v = (ring.srcY ?? ring.y) - pvy;
     const r = Math.hypot(u, v);
     const a = Math.atan2(u, v) + turn * smoothstep(1.5, 4, r);
     return [side * (pvx + r * Math.sin(a)), pvy + r * Math.cos(a)];
