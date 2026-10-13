@@ -12,7 +12,8 @@
     "deploy:pages": "node scripts/deploy-pages.mjs",
     "e2e:cloud": "node --import tsx scripts/e2e-cloud.ts e2e-shots",
     "e2e:tag": "node --import tsx scripts/e2e-tag.ts e2e-shots",
-    "e2e:3d": "node --import tsx scripts/e2e-3d.ts e2e-shots"
+    "e2e:3d": "node --import tsx scripts/e2e-3d.ts e2e-shots",
+    "e2e:smart": "node --import tsx scripts/e2e-smart.ts e2e-shots"
   },
   "dependencies": {
     "jszip": "^3.10.1",

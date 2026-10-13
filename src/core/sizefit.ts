@@ -166,6 +166,13 @@ export function analyzeSizeFit(input: SizeFitInput, body: BodyProfile | null): S
     else notes.push({ kind: steps <= -1 ? 'warn' : 'info', text: `${head}，比你的腰围小 ${-delta}cm，可能偏紧。` });
   }
 
+  const part = isLowerGarment(input.category) ? 'waist' : 'chest';
+  if (body.estimated?.includes(part)) {
+    notes.push({
+      kind: 'info',
+      text: `你的${part === 'waist' ? '腰围' : '胸围'}是按身高体重估算的，在设置里填上实测值，对比会更准。`,
+    });
+  }
   const effectiveFit = shiftFit(base, steps);
   if (effectiveFit !== base) {
     notes.push({

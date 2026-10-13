@@ -2,11 +2,14 @@
 
 import { useMemo } from 'react';
 import { hiddenFromBack } from '../../core/body';
-import type { Item, Placement } from '../../core/types';
+import type { GarmentLook, Item, Placement } from '../../core/types';
+import { Segmented } from '../components/Controls';
 import { Icon } from '../components/Icon';
 import { Mannequin3D } from '../components/Mannequin3D';
 import { useStore } from '../store';
 import { useUI } from '../ui';
+
+export const LOOK_LABELS: Record<GarmentLook, string> = { flat: '简化图形', photo: '照片' };
 
 /** 拍背面有意义的类别 */
 const BACK_MATTERS = new Set(['top', 'bottom', 'dress', 'outer']);
@@ -35,6 +38,15 @@ export function Viewer3D({ itemIds, layout, title }: { itemIds: string[]; layout
           ) : (
             <Mannequin3D body={store.settings.body} items={items} layout={layout} />
           )}
+          <div className="look-row">
+            <span className="small muted">衣服显示为</span>
+            <Segmented<GarmentLook>
+              options={['flat', 'photo']}
+              value={store.settings.garmentLook ?? 'flat'}
+              labels={LOOK_LABELS}
+              onChange={(v) => void store.updateSettings({ garmentLook: v })}
+            />
+          </div>
           <p className="small muted">
             拖动转动，双指缩放。人台按{store.settings.body ? '你的身材数据' : '默认身材'}生成，衣服用你拍的照片包裹，用来看配色和层次，不代表真实的布料和版型效果。
           </p>

@@ -1851,3 +1851,82 @@ input[type='range'] {
   width: 16px;
   height: 16px;
 }
+
+/* 身材数据：身高体重之外的尺寸可选 */
+.body-estimate {
+  margin: 6px 0 2px;
+}
+.more-sizes {
+  justify-self: start;
+  padding-left: 0;
+  margin: 4px 0 6px;
+}
+
+.look-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ---------- 色板 ---------- */
+
+.palette-bar {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.palette-strip {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.palette-strip span {
+  flex-basis: 0;
+  min-width: 6px;
+}
+.palette-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  font-size: var(--fs-s);
+  color: var(--ink-2);
+}
+.palette-meta strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---------- 这件怎么搭 ---------- */
+
+.match-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.match-head p {
+  margin: 4px 0 0;
+}
+.match-thumb {
+  width: 64px;
+  height: 78px;
+  flex: none;
+}
+.match-card {
+  padding: 12px;
+  margin-bottom: 14px;
+  border-radius: var(--r-l);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.match-card .stage {
+  height: 360px;
+}
+.match-items {
+  margin: 8px 0 4px;
+  color: var(--ink-2);
+}

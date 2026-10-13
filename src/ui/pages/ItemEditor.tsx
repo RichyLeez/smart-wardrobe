@@ -865,10 +865,18 @@ export function ItemEditor({ id }: { id: string | null }) {
                     </div>
                   )}
                   {existing && (
-                    <button type="button" className="btn btn-small" style={{ justifySelf: 'start' }} onClick={() => setStep('photo')}>
-                      <Icon name="camera" />
-                      重新拍照
-                    </button>
+                    <div className="row row-wrap">
+                      <button type="button" className="btn btn-small" onClick={() => setStep('photo')}>
+                        <Icon name="camera" />
+                        重新拍照
+                      </button>
+                      {existing.status === 'active' && (
+                        <button type="button" className="btn btn-small" onClick={() => ui.open({ kind: 'match', itemId: existing.id })}>
+                          <Icon name="sparkle" />
+                          这件怎么搭
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

@@ -78,6 +78,18 @@ async function drawPhoto(page: Page, back: boolean): Promise<Buffer> {
     const p = new Path2D(`M70,8 ${neck} 130,8 L166,20 L198,58 L172,82 L155,70 L155,190 L45,190 L45,70 L28,82 L2,58 L34,20 Z`);
     ctx.fillStyle = '#f2f1ec';
     ctx.fill(p);
+    // 平铺拍摄常见的褶皱阴影
+    ctx.save();
+    ctx.clip(p);
+    for (let k = 0; k < 9; k++) {
+      ctx.strokeStyle = `rgba(90,85,75,${0.1 + (k % 3) * 0.05})`;
+      ctx.lineWidth = 3 + (k % 4) * 2;
+      ctx.beginPath();
+      ctx.moveTo(30 + k * 18, 30);
+      ctx.quadraticCurveTo(60 + k * 14, 110, 20 + k * 20, 200);
+      ctx.stroke();
+    }
+    ctx.restore();
     ctx.strokeStyle = '#d8d6ce';
     ctx.lineWidth = 1.2;
     ctx.stroke(p);

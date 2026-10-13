@@ -1,6 +1,7 @@
 // 小组件：单品缩略图、卷尺评分、理由列表、评分明细。
 
-import { PART_KEYS, PART_LABELS, type OutfitEvaluation } from '../../core/recommend';
+import { useMemo } from 'react';
+import { PART_KEYS, PART_LABELS, outfitPalette, type OutfitEvaluation } from '../../core/recommend';
 import type { Item, Note } from '../../core/types';
 import { useImageUrl } from '../store';
 import { Icon } from './Icon';
@@ -70,6 +71,25 @@ export function PartBars({ evaluation }: { evaluation: OutfitEvaluation }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** 色板：按视觉面积排出这一套的颜色，并说明配色方式 */
+export function PaletteBar({ items }: { items: Item[] }) {
+  const pal = useMemo(() => outfitPalette(items), [items]);
+  if (pal.swatches.length === 0) return null;
+  return (
+    <div className="palette-bar" role="img" aria-label={`配色：${pal.scheme}`}>
+      <div className="palette-strip">
+        {pal.swatches.map((s) => (
+          <span key={s.name} style={{ background: s.hex, flexGrow: Math.max(0.04, s.share) }} />
+        ))}
+      </div>
+      <div className="palette-meta">
+        <strong>{pal.scheme}</strong>
+        <span>{pal.swatches.slice(0, 4).map((s) => `${s.name} ${Math.round(s.share * 100)}%`).join('、')}</span>
+      </div>
     </div>
   );
 }

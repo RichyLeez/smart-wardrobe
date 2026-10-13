@@ -6,7 +6,7 @@ import { matchesFacets, selectionSize, type FacetSelection } from '../../core/fa
 import type { ViewSide } from '../../core/body';
 import { evaluateOutfit, summarizeNotes, type RecommendContext } from '../../core/recommend';
 import type { Category, Item, Occasion, Outfit, Placement } from '../../core/types';
-import { ItemThumb, NoteList, PartBars, ScoreTape } from '../components/Bits';
+import { ItemThumb, NoteList, PaletteBar, PartBars, ScoreTape } from '../components/Bits';
 import { ChipMulti, Sheet } from '../components/Controls';
 import { ActiveFacets, FacetSheet } from '../components/Facets';
 import { Icon } from '../components/Icon';
@@ -232,6 +232,7 @@ export function BuilderPage() {
           )}
         </div>
         {evaluation && <ScoreTape score={evaluation.score} />}
+        {evaluation && <PaletteBar items={chosen} />}
 
         {selItem && selPlacement ? (
           <div className="adjust">

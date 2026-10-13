@@ -10,14 +10,15 @@ import { sortByLayer } from '../../core/recommend';
 import type { BodyProfile, Item, Placement } from '../../core/types';
 import { Renderer3D, cssColor, type GarmentDraw } from '../gl3d';
 import { createCanvas, loadImageElement } from '../imageTools';
-import { loadImageUrl } from '../store';
+import { flatId } from '../flatImage';
+import { loadImageUrl, useStore } from '../store';
 import { Mannequin } from './Mannequin';
 
 type View = 'front' | 'side' | 'back';
 const VIEW_YAW: Record<View, number> = { front: 0, side: Math.PI / 2, back: Math.PI };
 const VIEW_LABELS: Record<View, string> = { front: '正面', side: '侧面', back: '背面' };
 
-async function loadImage(id: string): Promise<HTMLImageElement> {
+async function loadImageById(id: string): Promise<HTMLImageElement> {
   const url = await loadImageUrl(id);
   if (!url) throw new Error('图片读取失败');
   return loadImageElement(url);
@@ -76,7 +77,8 @@ interface Built {
   shoes: ReturnType<typeof shoeMesh> | null;
 }
 
-async function buildScene(model: Body3D, items: Item[], layout?: Record<string, Placement>): Promise<Built> {
+async function buildScene(model: Body3D, items: Item[], layout: Record<string, Placement> | undefined, flat: boolean): Promise<Built> {
+  const loadImage = (id: string) => loadImageById(flat ? flatId(id) : id);
   const sorted = sortByLayer(items);
   let shoes: Built['shoes'] = null;
   const inputs: ShellInput[] = [];
@@ -129,6 +131,7 @@ export function Mannequin3D({ body, items, layout }: Props) {
   const pinch = useRef<{ d: number; zoom: number } | null>(null);
   const b = body ?? DEFAULT_BODY;
   const model = useMemo(() => body3d(b), [b]);
+  const flat = (useStore().settings.garmentLook ?? 'flat') === 'flat';
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -181,7 +184,7 @@ export function Mannequin3D({ body, items, layout }: Props) {
     if (!r) return;
     let alive = true;
     setStatus('loading');
-    buildScene(model, items, layout)
+    buildScene(model, items, layout, flat)
       .then((scene) => {
         if (!alive || rRef.current !== r) return;
         r.setShoes(scene.shoes);
@@ -192,7 +195,7 @@ export function Mannequin3D({ body, items, layout }: Props) {
     return () => {
       alive = false;
     };
-  }, [model, items, layout]);
+  }, [model, items, layout, flat]);
 
   useEffect(() => {
     if (auto) rRef.current?.requestRender();

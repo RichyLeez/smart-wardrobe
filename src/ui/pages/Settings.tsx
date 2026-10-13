@@ -1,10 +1,11 @@
 // 设置：身材数据与搭配目标、推荐偏好、天气位置、备份与数据管理。
 
 import { useEffect, useMemo, useState } from 'react';
-import { BODY_FIELDS, DEFAULT_BODY, bodyRatios, suggestGoals, validateBody } from '../../core/body';
+import { BODY_FIELDS, MEASURE_KEYS, WEIGHT_RANGE, bodyRatios, completeBody, estimateMeasures, suggestGoals, validateBody } from '../../core/body';
 import { GOAL_HINTS, GOAL_LABELS } from '../../core/catalog';
 import { emptyFeedback } from '../../core/recommend';
-import type { BodyGoal, BodyProfile, Gender } from '../../core/types';
+import type { BodyGoal, BodyProfile, Gender, GarmentLook, MeasureKey } from '../../core/types';
+import { LOOK_LABELS } from './Viewer3D';
 import { Field, Segmented, Switch } from '../components/Controls';
 import { Icon } from '../components/Icon';
 import { Mannequin } from '../components/Mannequin';
@@ -17,6 +18,8 @@ import { useUI } from '../ui';
 
 const GOALS: BodyGoal[] = ['lengthen_legs', 'balance_upper', 'balance_lower', 'define_waist'];
 const GENDER_LABELS: Record<Gender, string> = { female: '女', male: '男', unspecified: '不填' };
+const MEASURE_FIELDS = BODY_FIELDS.filter((f) => f.key !== 'height');
+const SHORT_LABELS: Record<MeasureKey, string> = { shoulder: '肩宽', chest: '胸围', waist: '腰围', hip: '臀围', inseam: '腿长' };
 
 function mb(n: number): string {
   return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
@@ -26,10 +29,13 @@ export function SettingsPage() {
   const store = useStore();
   const ui = useUI();
   const saved = store.settings.body;
-  const [form, setForm] = useState<Record<string, string>>(() => {
-    const b = saved ?? DEFAULT_BODY;
-    return Object.fromEntries(BODY_FIELDS.map((f) => [f.key, saved ? String(b[f.key]) : '']));
-  });
+  const [height, setHeight] = useState(saved ? String(saved.height) : '');
+  const [weight, setWeight] = useState(saved?.weight ? String(saved.weight) : '');
+  // 只回填实测过的尺寸，估算的留空（显示为提示）
+  const [form, setForm] = useState<Record<string, string>>(() =>
+    Object.fromEntries(MEASURE_KEYS.map((k) => [k, saved && !saved.estimated?.includes(k) ? String(saved[k]) : ''])),
+  );
+  const [showMore, setShowMore] = useState(() => !!saved && MEASURE_KEYS.some((k) => !saved.estimated?.includes(k)));
   const [gender, setGender] = useState<Gender>(saved?.gender ?? 'unspecified');
   const [busy, setBusy] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<Awaited<ReturnType<typeof storageEstimate>>>(null);
@@ -40,23 +46,39 @@ export function SettingsPage() {
     storageEstimate().then(setEstimate);
   }, [store.items.length, store.records.length]);
 
+  const h = Number(height);
+  const w = Number(weight);
+  const hOk = height.trim() !== '' && h >= 120 && h <= 220;
+  const wOk = weight.trim() !== '' && w >= WEIGHT_RANGE.min && w <= WEIGHT_RANGE.max;
+  const sizeGuess = hOk && wOk ? estimateMeasures(h, w, gender) : null;
   const parsed: BodyProfile | null = useMemo(() => {
-    const vals = BODY_FIELDS.map((f) => Number(form[f.key]));
-    if (vals.some((v) => !Number.isFinite(v) || v <= 0)) return null;
-    const b = { gender } as BodyProfile;
-    BODY_FIELDS.forEach((f, i) => (b[f.key] = vals[i]));
-    return b;
-  }, [form, gender]);
+    if (!hOk) return null;
+    const measured: Partial<Record<MeasureKey, number>> = {};
+    for (const k of MEASURE_KEYS) {
+      const v = Number(form[k]);
+      if (form[k].trim() !== '' && Number.isFinite(v) && v > 0) measured[k] = v;
+    }
+    try {
+      return completeBody(h, wOk ? w : undefined, gender, measured);
+    } catch {
+      return null;
+    }
+  }, [form, gender, h, w, hOk, wOk]);
   const errors = parsed ? validateBody(parsed) : [];
+  if (weight.trim() !== '' && !wOk) errors.unshift(`体重应在 ${WEIGHT_RANGE.min}–${WEIGHT_RANGE.max} kg 之间`);
   const preview = parsed && errors.length === 0 ? parsed : saved;
   const ratios = preview ? bodyRatios(preview) : null;
   const suggestions = preview ? suggestGoals(preview) : [];
-  const dirty =
-    parsed !== null &&
-    (!saved || BODY_FIELDS.some((f) => saved[f.key] !== parsed[f.key]) || saved.gender !== parsed.gender);
+  const sameBody = (a: BodyProfile, b: BodyProfile) =>
+    BODY_FIELDS.every((f) => a[f.key] === b[f.key]) &&
+    a.gender === b.gender &&
+    a.weight === b.weight &&
+    (a.estimated ?? []).join() === (b.estimated ?? []).join();
+  const dirty = parsed !== null && (!saved || !sameBody(saved, parsed));
 
   async function saveBody() {
-    if (!parsed) return ui.toast('请把 6 项数据填完整');
+    if (!hOk) return ui.toast('请填写身高（120–220 cm）');
+    if (!parsed) return ui.toast(wOk ? '请检查填写的尺寸' : '请填写体重，或者把 5 项尺寸都填上');
     if (errors.length) return ui.toast(errors[0]);
     await store.updateSettings({ body: parsed });
     await requestPersistence();
@@ -166,7 +188,7 @@ export function SettingsPage() {
         <div className="page">
           <section className="section" style={{ marginTop: 4 }}>
             <h2 className="section-title">
-              身材数据 <small>单位 cm</small>
+              身材数据 <small>只要身高和体重</small>
             </h2>
             <div className="body-preview">
               <div className="stage">
@@ -187,36 +209,85 @@ export function SettingsPage() {
                       <span>腰臀比</span>
                       <b>{ratios.waistHip.toFixed(2)}</b>
                     </div>
+                    {preview?.estimated?.length ? (
+                      <span className="muted small">比例按身高体重估算，填上实测尺寸后才会给出身材建议。</span>
+                    ) : null}
                   </>
                 ) : (
-                  <span className="muted small">填写后人台会按你的比例变化，推荐也会参考这些比例。</span>
+                  <span className="muted small">填好身高体重，人台就会按你的体型变化，推荐也会参考身材比例。</span>
                 )}
               </div>
             </div>
             <div className="body-grid" style={{ marginTop: 14 }}>
-              {BODY_FIELDS.map((f) => (
-                <label key={f.key}>
-                  {f.label}
-                  <span className="input-unit">
-                    <input
-                      className="input"
-                      type="number"
-                      inputMode="decimal"
-                      min={f.min}
-                      max={f.max}
-                      placeholder={String(DEFAULT_BODY[f.key])}
-                      value={form[f.key]}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [f.key]: e.target.value })}
-                    />
-                    <span>cm</span>
-                  </span>
-                  <span className="field-hint">{f.hint}</span>
-                </label>
-              ))}
+              <label>
+                身高
+                <span className="input-unit">
+                  <input
+                    className="input"
+                    type="number"
+                    inputMode="decimal"
+                    min={120}
+                    max={220}
+                    placeholder="170"
+                    value={height}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHeight(e.target.value)}
+                  />
+                  <span>cm</span>
+                </span>
+                <span className="field-hint">赤脚站直</span>
+              </label>
+              <label>
+                体重
+                <span className="input-unit">
+                  <input
+                    className="input"
+                    type="number"
+                    inputMode="decimal"
+                    min={WEIGHT_RANGE.min}
+                    max={WEIGHT_RANGE.max}
+                    placeholder="60"
+                    value={weight}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setWeight(e.target.value)}
+                  />
+                  <span>kg</span>
+                </span>
+                <span className="field-hint">用来估算体型</span>
+              </label>
             </div>
-            <Field label="比例参考" hint="只用于判断比例偏离程度">
+            <Field label="比例参考" hint="选了估算更准">
               <Segmented<Gender> options={['female', 'male', 'unspecified']} value={gender} labels={GENDER_LABELS} onChange={setGender} />
             </Field>
+            {sizeGuess && (
+              <p className="small muted body-estimate">
+                按身高体重估算：{MEASURE_KEYS.map((k) => `${SHORT_LABELS[k]} ${sizeGuess[k]}`).join('、')} cm。只是大致估计，量过的尺寸可以填在下面。
+              </p>
+            )}
+            <button type="button" className="btn btn-ghost btn-small more-sizes" aria-expanded={showMore} onClick={() => setShowMore((v) => !v)}>
+              {showMore ? '收起尺寸' : '填写更多尺寸（可选，更准）'}
+            </button>
+            {showMore && (
+              <div className="body-grid">
+                {MEASURE_FIELDS.map((f) => (
+                  <label key={f.key}>
+                    {f.label}
+                    <span className="input-unit">
+                      <input
+                        className="input"
+                        type="number"
+                        inputMode="decimal"
+                        min={f.min}
+                        max={f.max}
+                        placeholder={sizeGuess ? String(sizeGuess[f.key as MeasureKey]) : ''}
+                        value={form[f.key]}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [f.key]: e.target.value })}
+                      />
+                      <span>cm</span>
+                    </span>
+                    <span className="field-hint">{form[f.key].trim() ? f.hint : sizeGuess ? '留空就用估算值' : f.hint}</span>
+                  </label>
+                ))}
+              </div>
+            )}
             {parsed && errors.length > 0 && <div className="warnbox">{errors[0]}</div>}
             <button type="button" className="btn btn-primary btn-block" style={{ marginTop: 10 }} disabled={!dirty} onClick={saveBody}>
               {saved && !dirty ? '已保存' : '保存身材数据'}
@@ -252,6 +323,21 @@ export function SettingsPage() {
                 );
               })}
             </div>
+          </section>
+
+          <section className="section">
+            <h2 className="section-title">人台显示</h2>
+            <Field label="衣服显示为" hint={(store.settings.garmentLook ?? 'flat') === 'flat' ? '去掉褶皱和阴影' : '原始照片'}>
+              <Segmented<GarmentLook>
+                options={['flat', 'photo']}
+                value={store.settings.garmentLook ?? 'flat'}
+                labels={LOOK_LABELS}
+                onChange={(v) => void store.updateSettings({ garmentLook: v })}
+              />
+              <span className="field-hint">
+                简化图形按照片里的颜色块重新画一遍，平铺拍摄时的褶皱、阴影和反光都会去掉，搭配时看得更清楚；条纹、印花、拼色会保留。衣橱里的缩略图仍是照片。
+              </span>
+            </Field>
           </section>
 
           <section className="section">
@@ -339,7 +425,7 @@ export function SettingsPage() {
 
           <section className="section small muted">
             <p>
-              推荐完全在你的浏览器里用规则计算：配色、天气、场合、风格、身材目标、轮换和你的喜好七项打分，不调用任何 AI 服务。人台用于观察配色和比例，真实上身效果以照片为准。
+              推荐完全在你的浏览器里用规则计算：配色、天气、场合、风格、面料、身材目标、轮换和你的喜好八项打分，不调用任何 AI 服务。人台用于观察配色和比例，真实上身效果以照片为准。
             </p>
           </section>
         </div>

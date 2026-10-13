@@ -23,6 +23,7 @@ export type Overlay = (
   | { kind: 'record'; draft: RecordDraft }
   | { kind: 'settings' }
   | { kind: 'view3d'; itemIds: string[]; layout?: Record<string, Placement>; title?: string }
+  | { kind: 'match'; itemId: string }
 ) & {
   /** 每次打开时生成，用作组件 key，保证重新打开时是全新状态 */
   nonce?: number;

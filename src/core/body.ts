@@ -2,7 +2,7 @@
 // 坐标系：单位为 cm，x 以身体中线为 0（向右为正），y 从头顶向下为正。
 
 import { isSkirtLike } from './catalog';
-import type { BodyGoal, BodyProfile, Category, Gender, Item, Placement } from './types';
+import type { BodyGoal, BodyProfile, Category, Gender, Item, MeasureKey, Placement } from './types';
 
 export const DEFAULT_BODY: BodyProfile = {
   height: 170,
@@ -14,7 +14,7 @@ export const DEFAULT_BODY: BodyProfile = {
   gender: 'unspecified',
 };
 
-export const BODY_FIELDS: Array<{ key: keyof Omit<BodyProfile, 'gender'>; label: string; min: number; max: number; hint: string }> = [
+export const BODY_FIELDS: Array<{ key: 'height' | MeasureKey; label: string; min: number; max: number; hint: string }> = [
   { key: 'height', label: '身高', min: 120, max: 220, hint: '赤脚站直' },
   { key: 'shoulder', label: '肩宽', min: 28, max: 65, hint: '两侧肩峰之间的直线距离' },
   { key: 'chest', label: '胸围', min: 60, max: 150, hint: '胸部最丰满处水平一周' },
@@ -23,6 +23,77 @@ export const BODY_FIELDS: Array<{ key: keyof Omit<BodyProfile, 'gender'>; label:
   { key: 'inseam', label: '内侧腿长', min: 50, max: 115, hint: '裆部到地面的距离' },
 ];
 
+export const MEASURE_KEYS: MeasureKey[] = ['shoulder', 'chest', 'waist', 'hip', 'inseam'];
+
+export const WEIGHT_RANGE = { min: 30, max: 200 };
+
+/**
+ * 按身高、体重（和可选的比例参考）估算肩宽、三围和内侧腿长。
+ * 参照 GB/T 1335 成年人中间体（男 170/88A、女 160/84A）的身材比例：
+ * 先按身高等比例得到"标准体重"时的尺寸，再按 BMI 与参考值的差线性调整围度（腰围变化最大，肩宽变化最小）。
+ * 只是大致估计，同样身高体重的人肌肉、脂肪分布不同，尺寸可以差好几厘米。
+ */
+const ESTIMATE_BASE: Record<Gender, { bmi: number; ratio: Record<MeasureKey, number>; slope: Record<MeasureKey, number> }> = {
+  male: {
+    bmi: 22.5,
+    ratio: { shoulder: 0.236, chest: 0.53, waist: 0.455, hip: 0.54, inseam: 0.455 },
+    slope: { shoulder: 0.3, chest: 2.0, waist: 2.7, hip: 1.7, inseam: 0 },
+  },
+  female: {
+    bmi: 20.5,
+    ratio: { shoulder: 0.225, chest: 0.525, waist: 0.42, hip: 0.5625, inseam: 0.455 },
+    slope: { shoulder: 0.25, chest: 1.9, waist: 2.4, hip: 2.1, inseam: 0 },
+  },
+  unspecified: {
+    bmi: 21.5,
+    ratio: { shoulder: 0.23, chest: 0.528, waist: 0.438, hip: 0.551, inseam: 0.452 },
+    slope: { shoulder: 0.28, chest: 1.95, waist: 2.55, hip: 1.9, inseam: 0 },
+  },
+};
+
+export function bmiOf(height: number, weight: number): number {
+  return weight / (height / 100) ** 2;
+}
+
+export function estimateMeasures(height: number, weight: number, gender: Gender): Record<MeasureKey, number> {
+  const base = ESTIMATE_BASE[gender];
+  const dBmi = Math.max(-6, Math.min(14, bmiOf(height, weight) - base.bmi));
+  const out = {} as Record<MeasureKey, number>;
+  for (const k of MEASURE_KEYS) {
+    const f = BODY_FIELDS.find((x) => x.key === k)!;
+    const v = height * base.ratio[k] + base.slope[k] * dBmi;
+    out[k] = Math.round(Math.max(f.min, Math.min(f.max, v)));
+  }
+  // 腰围不超过胸围的 1.3 倍，保证人台形状合理
+  out.waist = Math.min(out.waist, Math.round(out.chest * 1.3));
+  return out;
+}
+
+/** 身高体重必填，其余尺寸填了就用实测值，没填的按估算补上，并记下哪些是估算的 */
+export function completeBody(
+  height: number,
+  weight: number | undefined,
+  gender: Gender,
+  measured: Partial<Record<MeasureKey, number>>,
+): BodyProfile {
+  const est = weight ? estimateMeasures(height, weight, gender) : null;
+  const estimated: MeasureKey[] = [];
+  const b: BodyProfile = { ...DEFAULT_BODY, height, gender };
+  for (const k of MEASURE_KEYS) {
+    const v = measured[k];
+    if (v !== undefined && Number.isFinite(v) && v > 0) b[k] = v;
+    else if (est) {
+      b[k] = est[k];
+      estimated.push(k);
+    } else {
+      throw new Error('没有体重时，需要把肩宽、胸围、腰围、臀围、腿长都填上');
+    }
+  }
+  if (weight) b.weight = weight;
+  if (estimated.length) b.estimated = estimated;
+  return b;
+}
+
 export function validateBody(b: BodyProfile): string[] {
   const errors: string[] = [];
   for (const f of BODY_FIELDS) {
@@ -30,6 +101,9 @@ export function validateBody(b: BodyProfile): string[] {
     if (!Number.isFinite(v) || v < f.min || v > f.max) {
       errors.push(`${f.label}应在 ${f.min}–${f.max} cm 之间`);
     }
+  }
+  if (b.weight !== undefined && (!Number.isFinite(b.weight) || b.weight < WEIGHT_RANGE.min || b.weight > WEIGHT_RANGE.max)) {
+    errors.push(`体重应在 ${WEIGHT_RANGE.min}–${WEIGHT_RANGE.max} kg 之间`);
   }
   if (errors.length === 0) {
     if (b.inseam > b.height * 0.56) errors.push('内侧腿长超过身高的 56%，请确认是否从裆部量到地面');
@@ -80,8 +154,11 @@ export function suggestGoals(b: BodyProfile): GoalSuggestion[] {
   const base = BASELINES[b.gender];
   const out: GoalSuggestion[] = [];
   const pct = (v: number) => `${Math.round(v * 100)}%`;
+  // 估算出来的尺寸只是平均比例，不能据此判断身材特点，只用实测值给建议
+  const est = new Set(b.estimated ?? []);
+  const measured = (...keys: MeasureKey[]) => keys.every((k) => !est.has(k));
 
-  if (r.legRatio < 0.45) {
+  if (measured('inseam') && r.legRatio < 0.45) {
     out.push({
       goal: 'lengthen_legs',
       reason: `内侧腿长约占身高的 ${pct(r.legRatio)}，略低于常见的 45%–47%`,
@@ -89,12 +166,14 @@ export function suggestGoals(b: BodyProfile): GoalSuggestion[] {
   }
   // 上下身宽度：综合胸臀比和肩臀比
   const upperIndex = (r.chestHip / base.chestHip + r.shoulderHip / base.shoulderHip) / 2;
-  if (upperIndex > 1.07) {
+  if (!measured('shoulder', 'chest', 'hip')) {
+    // 不判断上下身宽度
+  } else if (upperIndex > 1.07) {
     out.push({ goal: 'balance_upper', reason: '肩部和胸部相对臀部偏宽' });
   } else if (upperIndex < 0.93) {
     out.push({ goal: 'balance_lower', reason: '臀部相对肩部和胸部偏宽' });
   }
-  if (r.waistHip <= base.waistHipDefined) {
+  if (measured('waist', 'hip') && r.waistHip <= base.waistHipDefined) {
     out.push({ goal: 'define_waist', reason: `腰臀比约 ${r.waistHip.toFixed(2)}，腰线明显，适合强调` });
   }
   return out;

@@ -5,7 +5,8 @@ import { useMemo, useRef } from 'react';
 import { DEFAULT_BODY, garmentView, hiddenFromBack, mannequinGeometry, mannequinShapes, type ViewSide } from '../../core/body';
 import { sortByLayer } from '../../core/recommend';
 import type { BodyProfile, Item, Placement } from '../../core/types';
-import { useImageUrls } from '../store';
+import { flatId } from '../flatImage';
+import { useImageUrls, useStore } from '../store';
 
 interface Props {
   body: BodyProfile | null;
@@ -28,7 +29,10 @@ export function Mannequin({ body, items, layout, editable: editableProp, selecte
   const shapes = useMemo(() => mannequinShapes(geom), [geom]);
   const sorted = useMemo(() => sortByLayer(items).filter((i) => side === 'front' || !hiddenFromBack(i)), [items, side]);
   const views = useMemo(() => new Map(sorted.map((i) => [i.id, garmentView(i, geom, side, layout?.[i.id])])), [sorted, geom, side, layout]);
-  const urls = useImageUrls(sorted.map((i) => views.get(i.id)!.image));
+  // 默认显示去掉褶皱的简化图形；图形还没生成好时先显示照片
+  const flat = (useStore().settings.garmentLook ?? 'flat') === 'flat';
+  const photoIds = sorted.map((i) => views.get(i.id)!.image);
+  const urls = useImageUrls(flat ? [...photoIds, ...photoIds.map(flatId)] : photoIds);
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ id: string; x: number; y: number; start: Placement; pointerId: number } | null>(null);
   const vb = shapes.viewBox;
@@ -83,7 +87,7 @@ export function Mannequin({ body, items, layout, editable: editableProp, selecte
       <ellipse className="form-fill" cx={shapes.head.cx} cy={shapes.head.cy} rx={shapes.head.rx} ry={shapes.head.ry} />
       {sorted.map((item, idx) => {
         const v = views.get(item.id)!;
-        const url = urls[v.image];
+        const url = (flat ? urls[flatId(v.image)] : undefined) ?? urls[v.image];
         if (!url) return null;
         const r = v.rect;
         const image = (

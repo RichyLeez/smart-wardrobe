@@ -15,7 +15,7 @@ import { idleItems, wearStats } from '../../core/stats';
 import type { Category, Item, Occasion, WearRecord } from '../../core/types';
 import { representativeTemp, warmthTarget, weatherCodeLabel } from '../../core/weather';
 import { isHosted } from '../../storage/hosted';
-import { ItemThumb, NoteList, PartBars, ScoreTape } from '../components/Bits';
+import { ItemThumb, NoteList, PaletteBar, PartBars, ScoreTape } from '../components/Bits';
 import { ChipSelect, Sheet } from '../components/Controls';
 import { Icon } from '../components/Icon';
 import { Mannequin } from '../components/Mannequin';
@@ -234,7 +234,7 @@ export function TodayPage() {
               <Mannequin body={settings.body} items={[]} />
             </div>
             <h2>先把衣橱搬进来</h2>
-            <p>把衣服平铺在纯色背景上拍一张，应用会自动去掉背景、识别颜色。录入几件上衣和下装后，这里每天会给出搭配建议。</p>
+            <p>把衣服平铺拍一张，应用会自动去掉背景、识别颜色。录入几件上衣和下装后，这里每天会给出搭配建议。</p>
             <div className="row" style={{ justifyContent: 'center' }}>
               <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
                 <Icon name="camera" />
@@ -394,6 +394,7 @@ export function TodayPage() {
                 </div>
 
                 <section className="section" style={{ marginTop: 14 }}>
+                  <PaletteBar items={current.items} />
                   <NoteList notes={summarizeNotes(current)} />
                   <button type="button" className="btn btn-ghost btn-small" style={{ paddingLeft: 0, marginTop: 6 }} onClick={() => setShowParts((v) => !v)} aria-expanded={showParts}>
                     {showParts ? '收起评分明细' : '查看评分明细'}
@@ -466,9 +467,9 @@ export function TodayPage() {
             <button type="button" className="callout" onClick={() => ui.open({ kind: 'settings' })}>
               <Icon name="ruler" />
               <span>
-                <strong>填写身材数据</strong>
+                <strong>填写身高和体重</strong>
                 <br />
-                人台会按你的比例显示，推荐也会参考腿长、肩臀和腰臀比例。
+                人台会按你的体型显示，推荐也会参考身材比例。三围可以以后再补。
               </span>
             </button>
           )}

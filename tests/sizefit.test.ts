@@ -69,3 +69,10 @@ test('只有字母尺码或没有身材数据时给出说明，不做判断', ()
   assert.match(b.notes[0].text, /填写身材数据后/);
   assert.equal(analyzeSizeFit({ category: 'shoes', size: '42' }, me), null);
 });
+
+test('胸围是估算的时候提醒去量一下', () => {
+  const r = analyzeSizeFit({ category: 'top', fit: 'regular', size: '175/92A' }, { ...me, estimated: ['chest', 'hip'] })!;
+  assert.ok(r.notes.some((n) => /胸围是按身高体重估算的/.test(n.text)));
+  const pants = analyzeSizeFit({ category: 'bottom', fit: 'regular', size: '175/80A' }, { ...me, estimated: ['chest'] })!;
+  assert.ok(!pants.notes.some((n) => /估算/.test(n.text)), '下装看腰围，腰围是实测的就不提醒');
+});

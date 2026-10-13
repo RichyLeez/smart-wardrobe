@@ -120,7 +120,14 @@ export interface BodyProfile {
   inseam: number;
   /** 仅用于校准身材比例的参考阈值 */
   gender: Gender;
+  /** 体重 kg（用于在没填三围时估算体型） */
+  weight?: number;
+  /** 哪些尺寸是按身高体重估算的（没有亲自测量） */
+  estimated?: MeasureKey[];
 }
+
+/** 可以由身高体重估算的尺寸 */
+export type MeasureKey = 'shoulder' | 'chest' | 'waist' | 'hip' | 'inseam';
 
 export type BodyGoal = 'lengthen_legs' | 'balance_upper' | 'balance_lower' | 'define_waist';
 
@@ -172,6 +179,8 @@ export interface WearRecord {
   demo?: boolean;
 }
 
+export type GarmentLook = 'flat' | 'photo';
+
 export interface SavedLocation {
   lat: number;
   lon: number;
@@ -186,6 +195,8 @@ export interface Settings {
   location?: SavedLocation;
   /** 推荐时是否优先轮换闲置单品 */
   rotation: boolean;
+  /** 人台上的衣服显示为：简化图形（去掉褶皱，默认）或照片 */
+  garmentLook?: GarmentLook;
 }
 
 export interface FeedbackState {

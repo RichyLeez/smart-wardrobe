@@ -92,12 +92,15 @@ try {
   await page.getByRole('button', { name: '设置' }).click();
   const fill = async (label: string, v: string) => page.locator('.body-grid label', { hasText: label }).locator('input').fill(v);
   await fill('身高', '175');
+  await fill('体重', '70');
+  await page.getByRole('button', { name: '男', exact: true }).click();
+  check(await page.getByText(/按身高体重估算：肩宽 \d+、胸围 \d+/).isVisible(), '只填身高体重就能估算体型');
+  await page.getByRole('button', { name: '填写更多尺寸（可选，更准）' }).click();
   await fill('肩宽', '45');
   await fill('胸围', '92');
   await fill('腰围', '80');
   await fill('臀围', '96');
   await fill('内侧腿长', '80');
-  await page.getByRole('button', { name: '男', exact: true }).click();
   await page.getByRole('button', { name: '保存身材数据' }).click();
   await page.getByText('身材数据已保存').waitFor();
   await page.getByRole('button', { name: '返回' }).click();
