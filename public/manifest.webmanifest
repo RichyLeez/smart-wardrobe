@@ -1,0 +1,16 @@
+{
+  "name": "智能衣橱",
+  "short_name": "衣橱",
+  "description": "拍照录入衣物，结合身材数据和天气，每天给出穿搭建议",
+  "lang": "zh-CN",
+  "start_url": "./#/today",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f2f3f0",
+  "theme_color": "#f2f3f0",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
