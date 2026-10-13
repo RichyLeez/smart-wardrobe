@@ -48,6 +48,10 @@ export interface ImageRefs {
   thumb: string;
   /** 原图（缩放后），用于档案 */
   original?: string;
+  /** 背面的透明贴图（可选）。拍摄时把衣服左右翻过来平铺，图片就是从身后看的样子 */
+  backCutout?: string;
+  backThumb?: string;
+  backOriginal?: string;
 }
 
 export interface Item {
@@ -80,6 +84,8 @@ export interface Item {
   images: ImageRefs;
   /** 换装贴图宽高比 w / h */
   imageAspect: number;
+  /** 背面贴图宽高比（有背面照片时） */
+  backAspect?: number;
   createdAt: number;
   updatedAt: number;
   /** 示例数据标记，方便一键清除 */

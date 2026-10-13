@@ -2,6 +2,7 @@
 // 所有修改先写入存储，成功后再更新界面。
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { itemImageIds } from '../core/backup';
 import { suggestGoals } from '../core/body';
 import { emptyFeedback } from '../core/recommend';
 import { todayStr } from '../core/stats';
@@ -313,7 +314,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async deleteItem(id) {
       const item = data.items.find((i) => i.id === id);
       if (!item) return;
-      const imageIds = [item.images.cutout, item.images.thumb, item.images.original].filter((x): x is string => !!x);
+      const imageIds = itemImageIds(item);
       // 套装里去掉这件；穿搭记录保留名称快照
       const outfits = data.outfits
         .filter((o) => o.itemIds.includes(id))

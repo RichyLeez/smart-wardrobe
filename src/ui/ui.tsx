@@ -18,7 +18,12 @@ export interface RecordDraft {
   source: RecordSource;
 }
 
-export type Overlay = ({ kind: 'item'; id: string | null } | { kind: 'record'; draft: RecordDraft } | { kind: 'settings' }) & {
+export type Overlay = (
+  | { kind: 'item'; id: string | null }
+  | { kind: 'record'; draft: RecordDraft }
+  | { kind: 'settings' }
+  | { kind: 'view3d'; itemIds: string[]; layout?: Record<string, Placement>; title?: string }
+) & {
   /** 每次打开时生成，用作组件 key，保证重新打开时是全新状态 */
   nonce?: number;
 };

@@ -8,6 +8,8 @@
   --stage-dot: #c9c6bb;
   --form: #d7d0c3;
   --form-line: #b6ad9c;
+  /* 3D 人台的底色（有光照明暗，深色模式下要比 2D 人台亮一些） */
+  --form-3d: #d7d0c3;
   --ink: #1d2230;
   --ink-2: #545a69;
   --ink-3: #868b98;
@@ -48,6 +50,7 @@
     --stage: #222733;
     --stage-dot: #353c4a;
     --form: #4b4840;
+    --form-3d: #8d877b;
     --form-line: #625d53;
     --ink: #ecebe6;
     --ink-2: #b5b5b0;
@@ -69,6 +72,7 @@
   --stage: #222733;
   --stage-dot: #353c4a;
   --form: #4b4840;
+  --form-3d: #8d877b;
   --form-line: #625d53;
   --ink: #ecebe6;
   --ink-2: #b5b5b0;
@@ -1722,4 +1726,128 @@ input[type='range'] {
     border-left: 1px solid var(--line);
     border-right: 1px solid var(--line);
   }
+}
+
+/* ---------- 背面照片 ---------- */
+
+.back-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: var(--r-m);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.back-card p {
+  margin: 2px 0 8px;
+}
+.back-thumb {
+  width: 64px;
+  height: 78px;
+  flex: none;
+}
+.back-empty {
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  border: 1px dashed var(--line);
+  background: var(--paper);
+}
+
+/* ---------- 3D 人台 ---------- */
+
+.viewer3d-page {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.view3d {
+  display: grid;
+  gap: 12px;
+}
+.view3d-canvas {
+  position: relative;
+  height: min(64vh, 560px);
+  background-color: var(--stage);
+  background-image: radial-gradient(var(--stage-dot) 1px, transparent 1.2px);
+  background-size: 18px 18px;
+  background-position: 9px 9px;
+  border-radius: var(--r-l);
+  overflow: hidden;
+}
+.view3d-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+.view3d-canvas canvas:active {
+  cursor: grabbing;
+}
+.view3d-canvas svg.mannequin {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.view3d-status {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+  white-space: nowrap;
+}
+.view3d-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.view3d-note {
+  margin: 0;
+}
+
+/* 人台舞台角上的小按钮（3D、正面/背面） */
+.stage-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+.stage-tools.left {
+  right: auto;
+  left: 10px;
+}
+.stage-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-s);
+  cursor: pointer;
+}
+.stage-btn[aria-pressed='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+}
+.stage-btn svg {
+  width: 16px;
+  height: 16px;
 }

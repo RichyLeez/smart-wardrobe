@@ -186,6 +186,7 @@ export function RecordsPage() {
 
 function RecordCard({ record, items, onEdit, onDelete }: { record: WearRecord; items: Item[]; onEdit: () => void; onDelete: () => void }) {
   const store = useStore();
+  const ui = useUI();
   const photo = useImageUrl(record.photo);
   const its = record.itemIds.map((id) => items.find((i) => i.id === id)).filter((i): i is Item => !!i);
   const missing = record.itemSnapshots.filter((s) => !items.some((i) => i.id === s.id));
@@ -214,6 +215,16 @@ function RecordCard({ record, items, onEdit, onDelete }: { record: WearRecord; i
             <Icon name="edit" />
             编辑
           </button>
+          {its.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-small"
+              aria-label="3D 查看这天的穿搭"
+              onClick={() => ui.open({ kind: 'view3d', itemIds: its.map((i) => i.id), layout: record.layout, title: record.date })}
+            >
+              3D
+            </button>
+          )}
           <button type="button" className="btn btn-small btn-ghost btn-danger" onClick={onDelete}>
             删除
           </button>

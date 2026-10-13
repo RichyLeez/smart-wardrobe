@@ -1,6 +1,7 @@
 // 示例衣橱：用矢量图形画出平铺的衣物，方便在没有录入时先体验推荐流程。
 // 示例单品的图片 id 形如 demo:形状:颜色:尺寸，显示时现场绘制，不占用任何存储空间。
 
+import { itemImageIds } from '../core/backup';
 import { defaultsFor } from '../core/catalog';
 import { hexToLab, hexToRgb, nearestColorName, rgbToHex } from '../core/color';
 import { addDays, todayStr } from '../core/stats';
@@ -45,7 +46,8 @@ function palette(fill: string) {
   };
 }
 
-function svgFor(shape: Shape, hex: string): { svg: string; w: number; h: number } {
+function svgFor(shape: Shape, hex: string, back = false): { svg: string; w: number; h: number } {
+  if (back && BACK_SHAPES.has(shape)) return backSvgFor(shape, hex);
   const c = palette(hex);
   const st = `stroke="${c.line}" stroke-width="2.4" stroke-linejoin="round"`;
   const dt = `fill="none" stroke="${c.detail}" stroke-width="2" stroke-linecap="round"`;
@@ -208,6 +210,122 @@ function svgFor(shape: Shape, hex: string): { svg: string; w: number; h: number 
   }
 }
 
+/** 有背面图的示例衣物 */
+const BACK_SHAPES = new Set<Shape>(['tee', 'shirt', 'knit', 'hoodie', 'pants', 'wide', 'shorts', 'skirt', 'dress', 'trench', 'blazer', 'down']);
+
+/** 背面：外轮廓和正面一致（衣服左右翻过来平铺），细节换成背面的样子 */
+function backSvgFor(shape: Shape, hex: string): { svg: string; w: number; h: number } {
+  const c = palette(hex);
+  const st = `stroke="${c.line}" stroke-width="2.4" stroke-linejoin="round"`;
+  const dt = `fill="none" stroke="${c.detail}" stroke-width="2" stroke-linecap="round"`;
+  const wrap = (w: number, h: number, body: string) => ({
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w * 2}" height="${h * 2}">${body}</svg>`,
+    w,
+    h,
+  });
+  const pocket = (x: number, y: number, w: number, h: number) =>
+    `<path d="M${x},${y} L${x + w},${y} L${x + w - 2},${y + h} L${x + w / 2},${y + h + 6} L${x + 2},${y + h} Z" fill="none" stroke="${c.detail}" stroke-width="2"/>`;
+  switch (shape) {
+    case 'tee':
+      return wrap(
+        200,
+        196,
+        `<path d="M70,8 Q100,30 130,8 L166,20 L198,58 L172,82 L155,70 L155,190 L45,190 L45,70 L28,82 L2,58 L34,20 Z" fill="${c.fill}" ${st}/>
+         <path d="M70,8 Q100,16 130,8" ${dt}/><path d="M46,180 L154,180" ${dt}/>`,
+      );
+    case 'shirt':
+      return wrap(
+        240,
+        236,
+        `<path d="M84,10 L120,30 L156,10 L192,24 L236,184 L210,194 L172,86 L172,230 L68,230 L68,86 L30,194 L4,184 L48,24 Z" fill="${c.fill}" ${st}/>
+         <path d="M84,10 Q120,24 156,10 L156,18 Q120,32 84,18 Z" fill="${c.shade}" ${st}/>
+         <path d="M50,46 Q120,54 190,46" ${dt}/><path d="M112,50 L112,64 M128,50 L128,64" ${dt}/>
+         <path d="M14,176 L34,184 M226,176 L206,184" ${dt}/>`,
+      );
+    case 'knit':
+      return wrap(
+        240,
+        234,
+        `<path d="M82,12 Q120,34 158,12 L194,26 L236,180 L210,192 L172,88 L172,228 L68,228 L68,88 L30,192 L4,180 L46,26 Z" fill="${c.fill}" ${st}/>
+         <path d="M84,14 Q120,24 156,14" ${dt}/>
+         <path d="M70,214 L170,214 M12,170 L36,180 M228,170 L204,180" ${dt}/>
+         ${[86, 104, 122, 140, 158].map((x) => `<path d="M${x},214 L${x},228" ${dt}/>`).join('')}`,
+      );
+    case 'hoodie':
+      return wrap(
+        250,
+        246,
+        `<path d="M86,30 Q90,2 125,2 Q160,2 164,30 L200,38 L246,192 L218,204 L178,98 L178,240 L72,240 L72,98 L32,204 L4,192 L50,38 Z" fill="${c.fill}" ${st}/>
+         <path d="M86,30 Q90,2 125,2 Q160,2 164,30 Q156,86 125,92 Q94,86 86,30 Z" fill="${c.shade}" ${st}/>
+         <path d="M125,6 L125,90" ${dt}/><path d="M74,226 L176,226" ${dt}/>`,
+      );
+    case 'pants':
+      return wrap(
+        160,
+        310,
+        `<path d="M18,4 L142,4 L142,22 L152,304 L94,304 L80,98 L66,304 L8,304 L18,22 Z" fill="${c.fill}" ${st}/>
+         <path d="M18,22 L142,22 M80,22 L80,96 M20,36 Q80,48 140,36" ${dt}/>
+         ${pocket(30, 44, 36, 34)}${pocket(94, 44, 36, 34)}`,
+      );
+    case 'wide':
+      return wrap(
+        190,
+        310,
+        `<path d="M40,4 L150,4 L150,22 L186,304 L104,304 L95,110 L86,304 L4,304 L40,22 Z" fill="${c.fill}" ${st}/>
+         <path d="M40,22 L150,22 M95,22 L95,108 M56,48 L84,48 M106,48 L134,48" ${dt}/>`,
+      );
+    case 'shorts':
+      return wrap(
+        170,
+        140,
+        `<path d="M22,4 L148,4 L148,22 L166,134 L94,134 L85,74 L76,134 L4,134 L22,22 Z" fill="${c.fill}" ${st}/>
+         <path d="M22,22 L148,22 M85,22 L85,72" ${dt}/>${pocket(34, 34, 34, 28)}${pocket(102, 34, 34, 28)}`,
+      );
+    case 'skirt':
+      return wrap(
+        190,
+        214,
+        `<path d="M50,4 L140,4 L140,22 L186,208 L4,208 L50,22 Z" fill="${c.fill}" ${st}/>
+         <path d="M50,22 L140,22 M95,6 L95,92" ${dt}/><circle cx="95" cy="12" r="2.4" fill="${c.line}"/>`,
+      );
+    case 'dress':
+      return wrap(
+        210,
+        340,
+        `<path d="M72,6 L90,6 Q105,34 120,6 L138,6 L150,62 L134,124 L206,334 L4,334 L76,124 L60,62 Z" fill="${c.fill}" ${st}/>
+         <path d="M90,6 Q105,16 120,6" ${dt}/><path d="M76,124 L134,124 M105,14 L105,150" ${dt}/>`,
+      );
+    case 'trench':
+      return wrap(
+        260,
+        340,
+        `<path d="M92,8 L130,28 L168,8 L206,22 L256,220 L228,230 L186,96 L194,334 L66,334 L74,96 L32,230 L4,220 L54,22 Z" fill="${c.fill}" ${st}/>
+         <path d="M92,8 Q130,22 168,8 L170,18 Q130,34 90,18 Z" fill="${c.shade}" ${st}/>
+         <path d="M58,26 L202,26 L190,94 Q130,104 70,94 Z" fill="${c.shade}" ${st}/>
+         <path d="M74,176 L186,176 L186,190 L74,190 Z" fill="${c.shade}" ${st}/>
+         <path d="M130,196 L130,334" ${dt}/><path d="M130,262 L142,334" ${dt}/>`,
+      );
+    case 'blazer':
+      return wrap(
+        250,
+        262,
+        `<path d="M88,8 L125,26 L162,8 L198,22 L246,196 L220,206 L180,90 L182,256 L68,256 L70,90 L30,206 L4,196 L52,22 Z" fill="${c.fill}" ${st}/>
+         <path d="M88,8 Q125,22 162,8 L163,16 Q125,32 87,16 Z" fill="${c.shade}" ${st}/>
+         <path d="M125,24 L125,256 M125,212 L134,256" ${dt}/>`,
+      );
+    case 'down':
+      return wrap(
+        262,
+        272,
+        `<path d="M90,14 Q131,-2 172,14 L210,28 L258,206 L226,220 L190,104 L194,266 L68,266 L72,104 L36,220 L4,206 L52,28 Z" fill="${c.fill}" ${st}/>
+         ${[60, 102, 144, 186, 228].map((y) => `<path d="M72,${y} Q131,${y + 10} 190,${y}" ${dt}/>`).join('')}
+         <path d="M92,14 Q131,6 170,14" ${dt}/>`,
+      );
+    default:
+      return svgFor(shape, hex);
+  }
+}
+
 interface DemoSpec {
   name: string;
   category: Category;
@@ -249,15 +367,15 @@ const SHAPES = new Set<Shape>([
   'trench', 'blazer', 'down', 'sneakers', 'oxfords', 'boots', 'tote', 'belt', 'scarf',
 ]);
 
-function demoImageId(shape: Shape, hex: string, size: number): string {
-  return `${db.VIRTUAL_IMAGE_PREFIX}${shape}:${hex.replace('#', '')}:${size}`;
+function demoImageId(shape: Shape, hex: string, size: number, back = false): string {
+  return `${db.VIRTUAL_IMAGE_PREFIX}${shape}:${hex.replace('#', '')}:${size}${back ? ':back' : ''}`;
 }
 
 /** 按图片 id 现场绘制示例衣物，返回透明背景图片 */
 export async function renderDemoImage(id: string): Promise<Blob | undefined> {
-  const [prefix, shape, hex, size] = id.split(':');
+  const [prefix, shape, hex, size, side] = id.split(':');
   if (`${prefix}:` !== db.VIRTUAL_IMAGE_PREFIX || !SHAPES.has(shape as Shape) || !/^[0-9a-f]{6}$/i.test(hex)) return undefined;
-  const { svg, w, h } = svgFor(shape as Shape, `#${hex}`);
+  const { svg, w, h } = svgFor(shape as Shape, `#${hex}`, side === 'back');
   const canvas = await svgToCanvas(svg, w * 2, h * 2);
   return transparentBlob(scaleCanvas(canvas, Number(size) || 640));
 }
@@ -288,8 +406,15 @@ export async function createDemoWardrobe(onProgress?: (done: number, total: numb
       tags: ['示例'],
       favorite: !!spec.favorite,
       status: 'active',
-      images: { cutout: demoImageId(spec.shape, spec.hex, 640), thumb: demoImageId(spec.shape, spec.hex, 280) },
+      images: {
+        cutout: demoImageId(spec.shape, spec.hex, 640),
+        thumb: demoImageId(spec.shape, spec.hex, 280),
+        ...(BACK_SHAPES.has(spec.shape)
+          ? { backCutout: demoImageId(spec.shape, spec.hex, 640, true), backThumb: demoImageId(spec.shape, spec.hex, 280, true) }
+          : {}),
+      },
       imageAspect: w / h,
+      backAspect: BACK_SHAPES.has(spec.shape) ? w / h : undefined,
       createdAt: now - (SPECS.length - n) * 60_000 - 40 * 86_400_000,
       updatedAt: now,
       demo: true,
@@ -336,7 +461,7 @@ export async function removeDemoData(): Promise<number> {
   const demoIds = new Set(items.filter((i) => i.demo).map((i) => i.id));
   const imageIds = items
     .filter((i) => i.demo)
-    .flatMap((i) => [i.images.cutout, i.images.thumb, i.images.original].filter((x): x is string => !!x));
+    .flatMap(itemImageIds);
   const demoRecords = records.filter((r) => r.demo || (r.itemIds.length > 0 && r.itemIds.every((id) => demoIds.has(id))));
   const touched = outfits.filter((o) => o.itemIds.some((id) => demoIds.has(id)));
   const emptied = touched.filter((o) => o.itemIds.every((id) => demoIds.has(id)));

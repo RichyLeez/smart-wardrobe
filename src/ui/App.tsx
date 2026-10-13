@@ -6,6 +6,7 @@ import { RecordEditor } from './pages/RecordEditor';
 import { RecordsPage } from './pages/Records';
 import { SettingsPage } from './pages/Settings';
 import { TodayPage } from './pages/Today';
+import { Viewer3D } from './pages/Viewer3D';
 import { WardrobePage } from './pages/Wardrobe';
 import { openPermissionPanel } from '../storage/db';
 import { StoreProvider, useStore } from './store';
@@ -166,6 +167,7 @@ function Shell() {
         {overlay?.kind === 'item' && <ItemEditor key={overlay.nonce} id={overlay.id} />}
         {overlay?.kind === 'record' && <RecordEditor key={overlay.nonce} draft={overlay.draft} />}
         {overlay?.kind === 'settings' && <SettingsPage />}
+        {overlay?.kind === 'view3d' && <Viewer3D key={overlay.nonce} itemIds={overlay.itemIds} layout={overlay.layout} title={overlay.title} />}
       </ErrorBoundary>
     </>
   );

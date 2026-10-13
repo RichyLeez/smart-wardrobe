@@ -1,7 +1,8 @@
-// 2D 人台：按身材数据画出无五官的正面轮廓，把衣物贴图按类别吸附到对应位置。
+// 2D 人台：按身材数据画出无五官的轮廓，把衣物贴图按类别吸附到对应位置。
+// 可以看正面或背面：背面用单品的背面照片，没有背面照片时用正面照片的镜像。
 
 import { useMemo, useRef } from 'react';
-import { DEFAULT_BODY, applyPlacement, mannequinGeometry, mannequinShapes, placeGarment } from '../../core/body';
+import { DEFAULT_BODY, garmentView, hiddenFromBack, mannequinGeometry, mannequinShapes, type ViewSide } from '../../core/body';
 import { sortByLayer } from '../../core/recommend';
 import type { BodyProfile, Item, Placement } from '../../core/types';
 import { useImageUrls } from '../store';
@@ -16,14 +17,18 @@ interface Props {
   onMove?: (id: string, p: Placement) => void;
   animate?: boolean;
   label?: string;
+  /** 看正面还是背面；背面不能拖动调整 */
+  side?: ViewSide;
 }
 
-export function Mannequin({ body, items, layout, editable, selectedId, onSelect, onMove, animate, label }: Props) {
+export function Mannequin({ body, items, layout, editable: editableProp, selectedId, onSelect, onMove, animate, label, side = 'front' }: Props) {
   const b = body ?? DEFAULT_BODY;
+  const editable = editableProp && side === 'front';
   const geom = useMemo(() => mannequinGeometry(b), [b]);
   const shapes = useMemo(() => mannequinShapes(geom), [geom]);
-  const sorted = useMemo(() => sortByLayer(items), [items]);
-  const urls = useImageUrls(sorted.map((i) => i.images.cutout));
+  const sorted = useMemo(() => sortByLayer(items).filter((i) => side === 'front' || !hiddenFromBack(i)), [items, side]);
+  const views = useMemo(() => new Map(sorted.map((i) => [i.id, garmentView(i, geom, side, layout?.[i.id])])), [sorted, geom, side, layout]);
+  const urls = useImageUrls(sorted.map((i) => views.get(i.id)!.image));
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ id: string; x: number; y: number; start: Placement; pointerId: number } | null>(null);
   const vb = shapes.viewBox;
@@ -57,11 +62,7 @@ export function Mannequin({ body, items, layout, editable, selectedId, onSelect,
     void e;
   };
 
-  const selectedRect = (() => {
-    const it = sorted.find((i) => i.id === selectedId);
-    if (!it) return null;
-    return applyPlacement(placeGarment(it, geom), layout?.[it.id]);
-  })();
+  const selectedRect = selectedId ? views.get(selectedId)?.rect ?? null : null;
 
   return (
     <svg
@@ -70,7 +71,7 @@ export function Mannequin({ body, items, layout, editable, selectedId, onSelect,
       viewBox={`${vb.x} ${vb.y} ${vb.width} ${vb.height}`}
       preserveAspectRatio="xMidYMid meet"
       role="img"
-      aria-label={label ?? `人台：${sorted.map((i) => i.name).join('、') || '未穿搭'}`}
+      aria-label={label ?? `人台${side === 'back' ? '背面' : ''}：${sorted.map((i) => i.name).join('、') || '未穿搭'}`}
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? endDrag : undefined}
       onPointerCancel={editable ? endDrag : undefined}
@@ -81,12 +82,12 @@ export function Mannequin({ body, items, layout, editable, selectedId, onSelect,
       <path className="form-fill" d={shapes.body} />
       <ellipse className="form-fill" cx={shapes.head.cx} cy={shapes.head.cy} rx={shapes.head.rx} ry={shapes.head.ry} />
       {sorted.map((item, idx) => {
-        const url = urls[item.images.cutout];
+        const v = views.get(item.id)!;
+        const url = urls[v.image];
         if (!url) return null;
-        const r = applyPlacement(placeGarment(item, geom), layout?.[item.id]);
-        return (
+        const r = v.rect;
+        const image = (
           <image
-            key={item.id}
             className="garment"
             href={url}
             x={r.x}
@@ -97,6 +98,14 @@ export function Mannequin({ body, items, layout, editable, selectedId, onSelect,
             style={{ animationDelay: `${idx * 70}ms`, cursor: editable ? 'grab' : undefined }}
             onPointerDown={editable ? (e: React.PointerEvent<SVGImageElement>) => onPointerDown(e, item.id) : undefined}
           />
+        );
+        // 镜像放在外层分组上，避免和入场动画的 transform 冲突
+        return v.mirrored ? (
+          <g key={item.id} transform={`translate(${2 * (r.x + r.width / 2)} 0) scale(-1 1)`}>
+            {image}
+          </g>
+        ) : (
+          <g key={item.id}>{image}</g>
         );
       })}
       {editable && selectedRect && (

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CATEGORIES, CATEGORY_LABELS, OCCASIONS, OCCASION_LABELS } from '../../core/catalog';
 import { matchesFacets, selectionSize, type FacetSelection } from '../../core/facets';
+import type { ViewSide } from '../../core/body';
 import { evaluateOutfit, summarizeNotes, type RecommendContext } from '../../core/recommend';
 import type { Category, Item, Occasion, Outfit, Placement } from '../../core/types';
 import { ItemThumb, NoteList, PartBars, ScoreTape } from '../components/Bits';
@@ -33,6 +34,7 @@ export function BuilderPage() {
   const [saving, setSaving] = useState<null | { name: string; occasions: Occasion[] }>(null);
   const [facets, setFacets] = useState<FacetSelection>({});
   const [showFacets, setShowFacets] = useState(false);
+  const [side, setSide] = useState<ViewSide>('front');
 
   const setState = (fn: (s: BuilderState) => BuilderState) =>
     setStateRaw((s) => {
@@ -195,8 +197,39 @@ export function BuilderPage() {
             selectedId={selectedId}
             onSelect={setSelectedId}
             onMove={move}
-            label="试搭人台，可拖动衣物调整位置"
+            side={side}
+            label={side === 'front' ? '试搭人台，可拖动衣物调整位置' : undefined}
           />
+          {chosen.length > 0 && (
+            <>
+              <div className="stage-tools left" role="group" aria-label="看正面还是背面">
+                <button type="button" className="stage-btn" aria-pressed={side === 'front'} onClick={() => setSide('front')}>
+                  正面
+                </button>
+                <button
+                  type="button"
+                  className="stage-btn"
+                  aria-pressed={side === 'back'}
+                  onClick={() => {
+                    setSide('back');
+                    setSelectedId(null);
+                  }}
+                >
+                  背面
+                </button>
+              </div>
+              <div className="stage-tools">
+                <button
+                  type="button"
+                  className="stage-btn"
+                  aria-label="3D 查看这套"
+                  onClick={() => ui.open({ kind: 'view3d', itemIds: chosen.map((i) => i.id), layout: state.layout, title: '试搭' })}
+                >
+                  3D
+                </button>
+              </div>
+            </>
+          )}
         </div>
         {evaluation && <ScoreTape score={evaluation.score} />}
 
@@ -229,7 +262,11 @@ export function BuilderPage() {
             </button>
           </div>
         ) : (
-          chosen.length > 0 && <p className="small muted" style={{ marginTop: 10 }}>点人台上的衣物可以拖动位置、调整大小。</p>
+          chosen.length > 0 && (
+            <p className="small muted" style={{ marginTop: 10 }}>
+              {side === 'front' ? '点人台上的衣物可以拖动位置、调整大小。' : '这是从身后看的样子，没有背面照片的单品用正面照片代替。切回正面可以拖动调整。'}
+            </p>
+          )
         )}
 
         {active.length === 0 ? (

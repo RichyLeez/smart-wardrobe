@@ -311,6 +311,18 @@ export function TodayPage() {
             <div className="record" style={{ marginTop: 0 }}>
               <div className="stage">
                 <Mannequin body={settings.body} items={wornItems} layout={worn.layout} />
+                {wornItems.length > 0 && (
+                  <div className="stage-tools">
+                    <button
+                      type="button"
+                      className="stage-btn"
+                      aria-label="3D 查看今天的穿搭"
+                      onClick={() => ui.open({ kind: 'view3d', itemIds: wornItems.map((i) => i.id), layout: worn.layout, title: '今天的穿搭' })}
+                    >
+                      3D
+                    </button>
+                  </div>
+                )}
               </div>
               <div>
                 <div className="items">{worn.itemSnapshots.map((s) => s.name).join('、')}</div>
@@ -338,6 +350,16 @@ export function TodayPage() {
                     <div className="slide" key={`${o.signature}-${i}`} aria-label={`方案 ${i + 1}，${o.score} 分`}>
                       <div className="stage">
                         <Mannequin body={settings.body} items={o.items} animate />
+                        <div className="stage-tools">
+                          <button
+                            type="button"
+                            className="stage-btn"
+                            aria-label={`3D 查看方案 ${i + 1}`}
+                            onClick={() => ui.open({ kind: 'view3d', itemIds: o.items.map((x) => x.id), title: `方案 ${i + 1}` })}
+                          >
+                            3D
+                          </button>
+                        </div>
                       </div>
                       <ScoreTape score={o.score} />
                     </div>

@@ -25,13 +25,21 @@ export function isVirtualImageId(id: string): boolean {
   return id.startsWith('demo:');
 }
 
+/** 一件单品用到的全部图片（正面、背面的贴图、缩略图和原图） */
+export function itemImageIds(item: Pick<Item, 'images'>): string[] {
+  const im = item.images;
+  return [im.cutout, im.thumb, im.original, im.backCutout, im.backThumb, im.backOriginal].filter((x): x is string => !!x);
+}
+
+/** 单品的背面图片 */
+export function backImageIds(item: Pick<Item, 'images'>): string[] {
+  const im = item.images;
+  return [im.backCutout, im.backThumb, im.backOriginal].filter((x): x is string => !!x);
+}
+
 export function collectImageIds(items: Item[], records: WearRecord[]): string[] {
   const ids = new Set<string>();
-  for (const i of items) {
-    ids.add(i.images.cutout);
-    ids.add(i.images.thumb);
-    if (i.images.original) ids.add(i.images.original);
-  }
+  for (const i of items) for (const id of itemImageIds(i)) ids.add(id);
   for (const r of records) if (r.photo) ids.add(r.photo);
   return [...ids].filter((id) => !isVirtualImageId(id));
 }

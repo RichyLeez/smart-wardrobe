@@ -385,3 +385,43 @@ export function applyPlacement(rect: GarmentRect, p?: Placement): GarmentRect {
   const h = rect.height * p.scale;
   return { x: cx - w / 2, y: cy - h / 2, width: w, height: h };
 }
+
+// ---------- 正面 / 背面 ----------
+
+export type ViewSide = 'front' | 'back';
+
+type SideItem = PlaceableItem & Pick<Item, 'images' | 'backAspect'>;
+
+/** 从身后看不到的配饰 */
+export function hiddenFromBack(item: Pick<Item, 'category' | 'subtype'>): boolean {
+  return item.category === 'jewelry' && (item.subtype === '眼镜' || item.subtype === '项链');
+}
+
+export interface GarmentView {
+  rect: GarmentRect;
+  /** 使用的贴图 */
+  image: string;
+  /** 没有背面照片时，从身后看到的是正面照片的镜像 */
+  mirrored: boolean;
+  hasBack: boolean;
+}
+
+/**
+ * 某一面看到的衣物：位置和贴图。
+ * 背面视图的坐标同样以观察者的右手方向为 x 正方向，所以正面在右侧的东西（例如包）背面在左侧。
+ * 手动微调（placement）以正面为准，背面跟着镜像。
+ */
+export function garmentView(item: SideItem, g: MannequinGeometry, side: ViewSide, placement?: Placement): GarmentView {
+  const hasBack = !!item.images.backCutout;
+  if (side === 'front') {
+    return { rect: applyPlacement(placeGarment(item, g), placement), image: item.images.cutout, mirrored: false, hasBack };
+  }
+  const aspect = hasBack ? item.backAspect ?? item.imageAspect : item.imageAspect;
+  const r = applyPlacement(placeGarment({ ...item, imageAspect: aspect }, g), placement);
+  return {
+    rect: { ...r, x: -(r.x + r.width) },
+    image: hasBack ? item.images.backCutout! : item.images.cutout,
+    mirrored: !hasBack,
+    hasBack,
+  };
+}

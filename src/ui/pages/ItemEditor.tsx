@@ -1,4 +1,5 @@
 // 录入与编辑单品：拍照 → 本地去背（可手动擦除/恢复）→ 自动取色 → 点选字段。
+// 正面必拍，背面可选：背面照片走同样的去背流程，用于人台背面和 3D 展示。
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -32,6 +33,8 @@ import {
   subtypesOf,
 } from '../../core/catalog';
 import { PALETTE, extractColors, suggestColors, type ColorSuggestion } from '../../core/color';
+import { backImageIds } from '../../core/backup';
+import { smartCut } from '../../core/smartcut';
 import { analyzeSizeFit } from '../../core/sizefit';
 import { wearStats } from '../../core/stats';
 import { hasUsefulInfo, parseTagText, type TagParse } from '../../core/tag';
@@ -49,19 +52,33 @@ import {
   transparentBlob,
 } from '../imageTools';
 import { OCR_STAGE_TEXT, recognizeTagImage } from '../ocr';
-import { newId, useStore, type NewImage } from '../store';
+import { newId, useImageUrl, useStore, type NewImage } from '../store';
 import { useUI } from '../ui';
 
 type Step = 'photo' | 'cutout' | 'info';
 type Tool = 'none' | 'erase' | 'restore';
+type Side = 'front' | 'back';
+/** 去背方式：智能（颜色模型 + 图割，适合背景不纯）/ 按颜色（从边缘按背景色扩展，适合纯色背景） */
+type CutMode = 'smart' | 'color';
 
 interface Work {
   rgba: RGBAImage;
   archive: HTMLCanvasElement;
   lab: Float32Array;
   bg: BackgroundEstimate;
+  /** 按颜色去背的结果（也是智能去背的起点） */
+  colorAuto: Uint8Array;
+  /** 计算 colorAuto 时用的灵敏度 */
+  colorThreshold: number;
+  /** 当前方式下的自动结果 */
   auto: Uint8Array;
+  /** 手动笔刷：1 擦除，2 恢复 */
   override: Uint8Array;
+}
+
+function hasStrokes(o: Uint8Array): boolean {
+  for (let i = 0; i < o.length; i++) if (o[i]) return true;
+  return false;
 }
 
 interface Prepared {
@@ -195,11 +212,17 @@ export function ItemEditor({ id }: { id: string | null }) {
   const [step, setStep] = useState<Step>(existing ? 'info' : 'photo');
   const [work, setWork] = useState<Work | null>(null);
   const [threshold, setThreshold] = useState(20);
+  const [mode, setMode] = useState<CutMode>('smart');
   const [tool, setTool] = useState<Tool>('none');
   const [brush, setBrush] = useState(18);
   const [noRemoval, setNoRemoval] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
+  /** 正在拍的是正面还是背面 */
+  const [side, setSide] = useState<Side>('front');
+  const [preparedBack, setPreparedBack] = useState<Prepared | null>(null);
+  /** 编辑已有单品时去掉原来的背面照片 */
+  const [removeBack, setRemoveBack] = useState(false);
   const [draft, setDraft] = useState<Draft>(existing ? draftFromItem(existing) : EMPTY_DRAFT);
   const [showPalette, setShowPalette] = useState(false);
   const [showMore, setShowMore] = useState(false);
@@ -218,6 +241,8 @@ export function ItemEditor({ id }: { id: string | null }) {
   const painting = useRef(false);
   const frame = useRef(0);
   const preview = useMemo(() => (prepared ? prepared.cutout.toDataURL() : null), [prepared]);
+  const backPreview = useMemo(() => (preparedBack ? preparedBack.cutout.toDataURL() : null), [preparedBack]);
+  const hasExistingBack = !!existing?.images.backCutout && !removeBack;
   const stats = existing ? wearStats(store.records).get(existing.id) : undefined;
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
@@ -230,22 +255,25 @@ export function ItemEditor({ id }: { id: string | null }) {
     try {
       const photo = await loadPhoto(file);
       await new Promise((r) => setTimeout(r, 20));
-      setBusy('正在去除背景…');
-      await new Promise((r) => setTimeout(r, 20));
+      setBusy(mode === 'smart' ? '正在智能去背…' : '正在去除背景…');
+      await new Promise((r) => setTimeout(r, 30));
       const lab = toLabBuffer(photo.rgba);
       const bg = estimateBackground(photo.rgba, lab);
       const t = suggestThreshold(bg);
       const res = removeBackground(photo.rgba, { threshold: t }, lab);
+      const smart = mode === 'smart' ? smartCut(photo.rgba, { init: res.alpha }) : null;
       setThreshold(t);
       setWork({
         rgba: photo.rgba,
         archive: photo.archive,
         lab,
         bg,
-        auto: res.alpha,
+        colorAuto: res.alpha,
+        colorThreshold: t,
+        auto: smart ? smart.alpha : res.alpha,
         override: new Uint8Array(photo.rgba.width * photo.rgba.height),
       });
-      setNoRemoval(res.coverage > 0.97);
+      setNoRemoval((smart ?? res).coverage > 0.97);
       setTool('none');
       setStep('cutout');
     } catch (e) {
@@ -257,16 +285,37 @@ export function ItemEditor({ id }: { id: string | null }) {
     }
   }
 
-  // 调整阈值后重新计算自动蒙版（稍作延迟，避免拖动滑块时卡顿）
+  // 按颜色去背：调整灵敏度后重新计算（稍作延迟，避免拖动滑块时卡顿）
   useEffect(() => {
-    if (!work) return;
+    if (!work || work.colorThreshold === threshold) return;
     const timer = window.setTimeout(() => {
       const res = removeBackground(work.rgba, { threshold }, work.lab);
-      setWork((w) => (w ? { ...w, auto: res.alpha } : w));
+      setWork((w) => (w ? { ...w, colorAuto: res.alpha, colorThreshold: threshold, auto: mode === 'color' ? res.alpha : w.auto } : w));
     }, 140);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threshold]);
+
+  /** 智能去背：按当前笔刷重新分割；按颜色：直接用颜色结果 */
+  async function recompute(w: Work, m: CutMode) {
+    if (m === 'color') {
+      setWork({ ...w, auto: w.colorAuto });
+      return;
+    }
+    setBusy('正在智能去背…');
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const r = smartCut(w.rgba, { init: w.colorAuto, strokes: hasStrokes(w.override) ? w.override : undefined });
+      setWork({ ...w, auto: r.alpha });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function chooseMode(m: CutMode) {
+    setMode(m);
+    if (work) void recompute(work, m);
+  }
 
   const currentAlpha = (w: Work) => {
     if (noRemoval) return new Uint8Array(w.auto.length).fill(255);
@@ -296,7 +345,15 @@ export function ItemEditor({ id }: { id: string | null }) {
   function resetManual() {
     if (!work) return;
     work.override.fill(0);
-    setWork({ ...work });
+    if (mode === 'smart') void recompute(work, mode);
+    else setWork({ ...work });
+  }
+
+  /** 一笔画完：智能方式下按笔刷重新贴合边缘 */
+  function endStroke() {
+    if (!painting.current) return;
+    painting.current = false;
+    if (work && mode === 'smart') void recompute(work, 'smart');
   }
 
   async function finishCutout() {
@@ -311,8 +368,17 @@ export function ItemEditor({ id }: { id: string | null }) {
         return;
       }
       const cropped = applyMaskAndCrop(work.rgba, alpha, box);
+      const cutoutCanvas = scaleCanvas(rgbaToCanvas(cropped), 640);
+      if (side === 'back') {
+        setPreparedBack({ cutout: cutoutCanvas, archive: work.archive, aspect: cropped.width / cropped.height, colors: null });
+        setRemoveBack(false);
+        setSide('front');
+        setStep('info');
+        ui.toast('背面已加上，保存后生效');
+        return;
+      }
       const colors = suggestColors(extractColors(cropped.data, 4));
-      const cutout = scaleCanvas(rgbaToCanvas(cropped), 640);
+      const cutout = cutoutCanvas;
       setPrepared({ cutout, archive: work.archive, aspect: cropped.width / cropped.height, colors });
       if (colors) {
         setDraft((d) => {
@@ -481,8 +547,26 @@ export function ItemEditor({ id }: { id: string | null }) {
         images.push({ id: thumbId, blob: await transparentBlob(thumb), width: thumb.width, height: thumb.height });
         images.push({ id: originalId, blob: await canvasToBlob(prepared.archive, 'image/jpeg', 0.85), width: prepared.archive.width, height: prepared.archive.height });
         if (existing) replaced.push(existing.images.cutout, existing.images.thumb, ...(existing.images.original ? [existing.images.original] : []));
-        imageRefs = { cutout: cutoutId, thumb: thumbId, original: originalId };
+        // 只换正面时保留原来的背面
+        imageRefs = { ...imageRefs, cutout: cutoutId, thumb: thumbId, original: originalId };
         aspect = prepared.aspect;
+      }
+      let backAspect = existing?.backAspect;
+      if (preparedBack) {
+        const cutoutId = newId('img-');
+        const thumbId = newId('img-');
+        const originalId = newId('img-');
+        const thumb = scaleCanvas(preparedBack.cutout, 280);
+        images.push({ id: cutoutId, blob: await transparentBlob(preparedBack.cutout), width: preparedBack.cutout.width, height: preparedBack.cutout.height });
+        images.push({ id: thumbId, blob: await transparentBlob(thumb), width: thumb.width, height: thumb.height });
+        images.push({ id: originalId, blob: await canvasToBlob(preparedBack.archive, 'image/jpeg', 0.85), width: preparedBack.archive.width, height: preparedBack.archive.height });
+        if (existing) replaced.push(...backImageIds(existing));
+        imageRefs = { ...imageRefs!, backCutout: cutoutId, backThumb: thumbId, backOriginal: originalId };
+        backAspect = preparedBack.aspect;
+      } else if (removeBack && existing) {
+        replaced.push(...backImageIds(existing));
+        imageRefs = { ...imageRefs!, backCutout: undefined, backThumb: undefined, backOriginal: undefined };
+        backAspect = undefined;
       }
       const app = FIELD_APPLICABILITY[draft.category];
       const item: Item = {
@@ -515,9 +599,10 @@ export function ItemEditor({ id }: { id: string | null }) {
         status: existing?.status ?? 'active',
         images: imageRefs!,
         imageAspect: aspect,
+        backAspect: imageRefs!.backCutout ? backAspect : undefined,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
-        demo: existing?.demo && !prepared ? existing.demo : undefined,
+        demo: existing?.demo && !prepared && !preparedBack && !removeBack ? existing.demo : undefined,
       };
       await store.saveItem(item, images, replaced);
       if (existing) {
@@ -565,10 +650,21 @@ export function ItemEditor({ id }: { id: string | null }) {
     : null;
   const isNew = !existing;
   const steps: Array<{ key: Step; label: string }> = [
-    { key: 'photo', label: '1 照片' },
+    { key: 'photo', label: side === 'back' ? '1 背面' : '1 照片' },
     { key: 'cutout', label: '2 去背' },
     { key: 'info', label: '3 信息' },
   ];
+  const backThumbId = hasExistingBack ? existing?.images.backThumb : undefined;
+
+  function startBack() {
+    setSide('back');
+    setStep('photo');
+  }
+
+  function cancelBack() {
+    setSide('front');
+    setStep('info');
+  }
   const stepIndex = steps.findIndex((s) => s.key === step);
 
   return (
@@ -611,7 +707,7 @@ export function ItemEditor({ id }: { id: string | null }) {
               <div className="capture-zone">
                 <div>
                   <Icon name="camera" />
-                  <p style={{ margin: '8px 0 16px' }}>{busy ?? '拍一张平铺的衣物照片'}</p>
+                  <p style={{ margin: '8px 0 16px' }}>{busy ?? (side === 'back' ? '把衣服翻过来，拍背面' : '拍一张平铺的衣物照片')}</p>
                   <div className="row" style={{ justifyContent: 'center' }}>
                     <button type="button" className="btn btn-primary" disabled={!!busy} onClick={() => cameraRef.current?.click()}>
                       <Icon name="camera" />
@@ -626,13 +722,25 @@ export function ItemEditor({ id }: { id: string | null }) {
               </div>
               <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e: React.ChangeEvent<HTMLInputElement>) => onFile(e.target.files?.[0])} />
               <input ref={albumRef} type="file" accept="image/*" hidden data-testid="photo-input" onChange={(e: React.ChangeEvent<HTMLInputElement>) => onFile(e.target.files?.[0])} />
+              {side === 'back' ? (
+                <ul className="tips">
+                  <li>像翻书一样左右翻面，领口仍然朝上，摆成和正面差不多的形状。</li>
+                  <li>背景和光线尽量和拍正面时一样。</li>
+                  <li>背面照片用在人台背面和 3D 展示，不影响颜色识别。</li>
+                </ul>
+              ) : (
               <ul className="tips">
                 <li>衣物平铺，完整入镜，四周留一点空白。</li>
                 <li>深色衣物配浅色背景，浅色衣物配深色背景，背景越纯越好（床单、地板、纸板都可以）。</li>
                 <li>光线均匀，避免强烈阴影和反光。</li>
                 <li>上衣和外套尽量把袖子摆开，换装时更像穿在身上。</li>
               </ul>
-              {existing && (
+              )}
+              {side === 'back' ? (
+                <button type="button" className="btn btn-ghost" onClick={cancelBack}>
+                  先不拍背面
+                </button>
+              ) : existing && (
                 <button type="button" className="btn btn-ghost" onClick={() => setStep('info')}>
                   不换照片，返回
                 </button>
@@ -642,8 +750,8 @@ export function ItemEditor({ id }: { id: string | null }) {
 
           {step === 'cutout' && work && (
             <div style={{ display: 'grid', gap: 12 }}>
-              {work.bg.spread > 9 && !noRemoval && (
-                <div className="warnbox">背景颜色不太均匀，自动去背可能不完整。可以用下方的擦除和恢复笔刷修一修，或换一块纯色背景重拍。</div>
+              {work.bg.spread > 9 && !noRemoval && mode === 'color' && (
+                <div className="warnbox">背景颜色不太均匀，按颜色去背可能不完整，建议改用「智能」方式。</div>
               )}
               <div className="cutout-view">
                 <canvas
@@ -657,25 +765,35 @@ export function ItemEditor({ id }: { id: string | null }) {
                     paintAt(e);
                   }}
                   onPointerMove={(e: React.PointerEvent<HTMLCanvasElement>) => painting.current && paintAt(e)}
-                  onPointerUp={() => (painting.current = false)}
-                  onPointerCancel={() => (painting.current = false)}
+                  onPointerUp={endStroke}
+                  onPointerCancel={endStroke}
                 />
                 {busy && <div className="busy">{busy}</div>}
               </div>
               <Switch label="不去背，保留原图" checked={noRemoval} onChange={setNoRemoval} hint="背景太杂时可以先保留原图，换装时会显示为矩形照片" />
               {!noRemoval && (
                 <>
-                  <Field label="去背灵敏度" hint={`${threshold}`}>
-                    <input
-                      type="range"
-                      min={6}
-                      max={60}
-                      value={threshold}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setThreshold(Number(e.target.value))}
-                      aria-label="去背灵敏度，越大去掉的越多"
-                    />
-                    <span className="field-hint">衣物被去掉一部分时调小，背景残留时调大。</span>
+                  <Field label="去背方式">
+                    <Segmented<CutMode> options={['smart', 'color']} value={mode} labels={{ smart: '智能', color: '按颜色' }} onChange={chooseMode} />
+                    <span className="field-hint">
+                      {mode === 'smart'
+                        ? '自动找出衣物边缘，背景有花纹、地板缝也能处理。'
+                        : '从照片四周按背景色往里去掉，适合纯色背景，速度更快。'}
+                    </span>
                   </Field>
+                  {mode === 'color' && (
+                    <Field label="去背灵敏度" hint={`${threshold}`}>
+                      <input
+                        type="range"
+                        min={6}
+                        max={60}
+                        value={threshold}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setThreshold(Number(e.target.value))}
+                        aria-label="去背灵敏度，越大去掉的越多"
+                      />
+                      <span className="field-hint">衣物被去掉一部分时调小，背景残留时调大。</span>
+                    </Field>
+                  )}
                   <Field label="手动修整" hint={tool === 'none' ? '' : '在图上涂抹'}>
                     <div className="row row-wrap">
                       <div className="segmented">
@@ -699,6 +817,11 @@ export function ItemEditor({ id }: { id: string | null }) {
                         aria-label="笔刷大小"
                       />
                     )}
+                    <span className="field-hint">
+                      {mode === 'smart'
+                        ? '不用涂满：在残留的背景上划一笔「擦除」，或在缺掉的衣物上划一笔「恢复」，松手后会自动贴合边缘。'
+                        : '擦除和恢复只改涂到的地方。'}
+                    </span>
                   </Field>
                 </>
               )}
@@ -749,6 +872,57 @@ export function ItemEditor({ id }: { id: string | null }) {
                   )}
                 </div>
               </div>
+
+              <section className="back-card" aria-label="背面照片">
+                <div className="back-thumb">
+                  {backPreview ? (
+                    <div className="thumb fill">
+                      <img src={backPreview} alt="背面" />
+                    </div>
+                  ) : backThumbId ? (
+                    <BackThumb id={backThumbId} />
+                  ) : (
+                    <div className="thumb fill back-empty" aria-hidden="true">
+                      <Icon name="camera" />
+                    </div>
+                  )}
+                </div>
+                <div className="grow">
+                  <strong>背面</strong>
+                  <p className="small muted">
+                    {backPreview || backThumbId
+                      ? backPreview
+                        ? '新拍的背面，保存后生效。'
+                        : '人台转到背面和 3D 展示时使用。'
+                      : removeBack
+                        ? '背面照片会在保存后删除。'
+                        : '可选。拍了背面，人台转到身后和 3D 展示会更真实。'}
+                  </p>
+                  <div className="row row-wrap">
+                    <button type="button" className="btn btn-small" disabled={!!busy} onClick={startBack}>
+                      <Icon name="camera" />
+                      {backPreview || backThumbId ? '换一张背面' : '拍背面'}
+                    </button>
+                    {(backPreview || backThumbId) && (
+                      <button
+                        type="button"
+                        className="btn btn-small btn-ghost"
+                        onClick={() => {
+                          setPreparedBack(null);
+                          if (existing?.images.backCutout) setRemoveBack(true);
+                        }}
+                      >
+                        去掉背面
+                      </button>
+                    )}
+                    {removeBack && !backPreview && (
+                      <button type="button" className="btn btn-small btn-ghost" onClick={() => setRemoveBack(false)}>
+                        撤销
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </section>
 
               <section className="tag-card" aria-label="吊牌信息">
                 <div className="tag-card-head">
@@ -1066,4 +1240,9 @@ export function ItemEditor({ id }: { id: string | null }) {
       </div>
     </div>
   );
+}
+
+function BackThumb({ id }: { id: string }) {
+  const url = useImageUrl(id);
+  return <div className="thumb fill">{url ? <img src={url} alt="背面" /> : null}</div>;
 }

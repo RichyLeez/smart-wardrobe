@@ -46,6 +46,10 @@ declare namespace React {
     pointerType: string;
     isPrimary: boolean;
   }
+  interface WheelEvent<T = Element> extends MouseEvent<T> {
+    deltaX: number;
+    deltaY: number;
+  }
   interface KeyboardEvent<T = Element> extends SyntheticEvent<T, globalThis.KeyboardEvent> {
     key: string;
   }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addDays, daysBetween, idleItems, wearStats } from '../src/core/stats';
-import { BACKUP_APP, BACKUP_VERSION, validateManifest } from '../src/core/backup';
+import { BACKUP_APP, BACKUP_VERSION, backImageIds, collectImageIds, itemImageIds, validateManifest } from '../src/core/backup';
 import { emptyFeedback } from '../src/core/recommend';
 import type { WearRecord } from '../src/core/types';
 import { makeItem } from './helpers';
@@ -59,4 +59,29 @@ test('备份清单校验：图片缺失和非本应用文件都会被拒绝', ()
   assert.ok(validateManifest({ ...ok, images: {} })[0].includes('图片'));
   assert.ok(validateManifest({ ...ok, app: 'x' }).length > 0);
   assert.ok(validateManifest(null).length > 0);
+});
+
+test('背面照片和正面照片一起备份、一起删除；示例图片不进备份', () => {
+  const item = makeItem('top', 'T恤', '#232326', {
+    images: { cutout: 'c', thumb: 't', original: 'o', backCutout: 'bc', backThumb: 'bt', backOriginal: 'bo' },
+    backAspect: 0.9,
+  });
+  assert.deepEqual(itemImageIds(item), ['c', 't', 'o', 'bc', 'bt', 'bo']);
+  assert.deepEqual(backImageIds(item), ['bc', 'bt', 'bo']);
+  const demo = makeItem('top', 'T恤', '#232326', { images: { cutout: 'demo:tee:232326:640', thumb: 'demo:tee:232326:280', backCutout: 'demo:tee:232326:640:back' } });
+  const ids = collectImageIds([item, demo], []);
+  assert.ok(ids.includes('bc') && ids.includes('bo'));
+  assert.ok(!ids.some((id) => id.startsWith('demo:')));
+  const manifest = {
+    app: BACKUP_APP,
+    version: BACKUP_VERSION,
+    exportedAt: '',
+    items: [item],
+    outfits: [],
+    records: [],
+    settings: {},
+    feedback: emptyFeedback(),
+    images: { c: 'images/c', t: 'images/t', o: 'images/o', bc: 'images/bc', bt: 'images/bt' },
+  };
+  assert.ok(validateManifest(manifest)[0].includes('1 张图片'), '缺背面原图时提示');
 });
