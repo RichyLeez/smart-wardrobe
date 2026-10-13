@@ -16,8 +16,9 @@
 - 仅供个人使用，不提供公开分享或多人协作。
 - 以 100 件以内的个人衣橱为首版使用规模。
 - 核心入口为：今日、衣橱、试搭、记录；设置从今日页右上角进入。
-- 日常使用方式：作为 claude.ai 上发布的网页打开（固定链接 https://claude.ai/artifact/A1xSptW9xvoMoDLTbnMD92 ，更新时发布 `dist/artifact.html` 到同一地址，声明 db、user、assets、downloads 四项能力），数据保存在用户 Claude 账号下的私有云端空间，手机和电脑看到同一份衣橱。
-- 直接打开单文件版或本地开发时，数据保存在本机浏览器（IndexedDB）。两种方式之间用 ZIP 备份迁移。
+- 日常使用方式：打开 GitHub Pages 网址 https://richyleez.github.io/smart-wardrobe/ （手机和电脑在国内不开代理即可访问）。数据保存在各设备浏览器的 IndexedDB 里，设备之间用 ZIP 备份迁移。
+- 为什么不用 claude.ai 发布页面：用户网络下 Claude 托管页面的域名（*.claudeusercontent.com）连不上，连最简单的测试页也打不开。云端存储版的代码仍然保留（`storage/cloud.ts`），发布在 https://claude.ai/artifact/A1xSptW9xvoMoDLTbnMD92 ，网络条件允许时可用，届时声明 db、user、assets、downloads 四项能力并发布 `dist/artifact.html`。
+- 直接打开单文件版或本地开发时，同样使用本机 IndexedDB。
 - 不使用需要持续付费的 AI 抠图、AI 试穿或 AI 搭配服务。**每日推荐由本地规则引擎完成**（这是相对微信小程序版的范围调整，已由用户确认）。
 - 推荐必须可解释：每套搭配都展示评分和中文理由。
 - 身材相关规则来自穿搭经验，以"建议、可开关"的方式呈现，不做绝对化判断。
@@ -113,7 +114,8 @@
 - 不使用全大写标签、间隔号拼接的元信息、按钮箭头等模板化写法。
 - 颜色只通过 `styles.css` 里的 CSS 变量取用，深色模式在同一处定义。
 - 发布页面的限制：不能用 `alert/confirm/prompt`（用界面内确认框）、不能用 `<a download>`（用 `storage/hosted.ts` 的 `saveFile`）、不能联网请求外部接口和定位、地址栏只保留 `#today` 这类简单锚点。
-- 命令：`npm run dev`（开发服务器，局域网可访问）、`npm test`、`npm run typecheck`、`npm run build`、`npm run e2e:cloud`（模拟发布环境的端到端测试，需先 build）。
+- 命令：`npm run dev`（开发服务器，局域网可访问）、`npm test`、`npm run typecheck`、`npm run build`、`npm run deploy:pages`（把 dist/ 发布到 gh-pages 分支，即更新网站）、`npm run e2e:cloud`（模拟 claude.ai 发布环境的端到端测试，需先 build）。
+- 仓库：https://github.com/RichyLeez/smart-wardrobe ，main 分支是源码，gh-pages 分支是构建好的网站（由 deploy:pages 生成，不要手改）。
 
 ## 七、当前实现规模
 
@@ -141,7 +143,8 @@
 - 用真实衣物照片校准去背默认灵敏度和主色识别。
 - 用接近 100 件单品的衣橱做性能与存储占用测试。
 - 根据实际穿着反馈微调推荐权重和身材规则。
-- 如需自动天气：发布页面无法联网，可另行部署到自己的 HTTPS 网站（此时数据存本机，需用备份迁移）。
+- GitHub Pages 网址在国内偶尔不稳定；如果长期打不开，可改用国内静态托管（需实名）或回到微信小程序。
+- 多设备同步：目前靠备份迁移；如需自动同步，需要一个国内可访问的后端（另行评估成本与隐私）。
 - 如需迁回微信小程序：复用 `src/core/`，重写界面层与存储层。
 
 ## 十、后续讨论的判断标准
