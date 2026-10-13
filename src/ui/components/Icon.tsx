@@ -23,6 +23,8 @@ const PATHS: Record<string, string> = {
   edit: 'M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4',
   sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z',
   archive: 'M4 5h16v4H4zM5.5 9v10h13V9M10 13h4',
+  filter: 'M4 7h9M17 7h3M15 5v4M4 17h3M11 17h9M9 15v4',
+  tag: 'M3.5 12.5V5A1.5 1.5 0 0 1 5 3.5h7.5l8 8-9 9-8-8zM8 7.5a.5.5 0 1 0 0 .1',
 };
 
 export function Icon({ name, title }: { name: keyof typeof PATHS | string; title?: string }) {

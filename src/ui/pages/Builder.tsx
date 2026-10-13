@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { CATEGORIES, CATEGORY_LABELS, OCCASIONS, OCCASION_LABELS } from '../../core/catalog';
+import { matchesFacets, selectionSize, type FacetSelection } from '../../core/facets';
 import { evaluateOutfit, summarizeNotes, type RecommendContext } from '../../core/recommend';
 import type { Category, Item, Occasion, Outfit, Placement } from '../../core/types';
 import { ItemThumb, NoteList, PartBars, ScoreTape } from '../components/Bits';
 import { ChipMulti, Sheet } from '../components/Controls';
+import { ActiveFacets, FacetSheet } from '../components/Facets';
 import { Icon } from '../components/Icon';
 import { Mannequin } from '../components/Mannequin';
 import { newId, useStore } from '../store';
@@ -29,6 +31,8 @@ export function BuilderPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showParts, setShowParts] = useState(false);
   const [saving, setSaving] = useState<null | { name: string; occasions: Occasion[] }>(null);
+  const [facets, setFacets] = useState<FacetSelection>({});
+  const [showFacets, setShowFacets] = useState(false);
 
   const setState = (fn: (s: BuilderState) => BuilderState) =>
     setStateRaw((s) => {
@@ -247,9 +251,19 @@ export function BuilderPage() {
                 </button>
               ))}
             </div>
+            <div className="wardrobe-tools">
+              <button type="button" className="chip chip-tool" aria-pressed={selectionSize(facets) > 0} onClick={() => setShowFacets(true)}>
+                <Icon name="filter" />
+                {selectionSize(facets) ? `筛选 ${selectionSize(facets)}` : '按品牌、面料、颜色筛选'}
+              </button>
+            </div>
+            <ActiveFacets items={active} value={facets} onChange={setFacets} />
+            {active.filter((i) => i.category === tab && matchesFacets(i, facets)).length === 0 && (
+              <p className="muted small">这一类里没有符合条件的单品。</p>
+            )}
             <div className="picker">
               {active
-                .filter((i) => i.category === tab)
+                .filter((i) => i.category === tab && matchesFacets(i, facets))
                 .map((i) => (
                   <button key={i.id} type="button" className="pick" aria-pressed={state.selected[i.category] === i.id} onClick={() => toggle(i)}>
                     <ItemThumb item={i} />
@@ -259,6 +273,8 @@ export function BuilderPage() {
             </div>
           </section>
         )}
+
+        {showFacets && <FacetSheet items={active} value={facets} onChange={setFacets} onClose={() => setShowFacets(false)} />}
 
         {evaluation && (
           <section className="section">

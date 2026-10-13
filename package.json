@@ -10,7 +10,8 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json",
     "deploy:pages": "node scripts/deploy-pages.mjs",
-    "e2e:cloud": "node --import tsx scripts/e2e-cloud.ts e2e-shots"
+    "e2e:cloud": "node --import tsx scripts/e2e-cloud.ts e2e-shots",
+    "e2e:tag": "node --import tsx scripts/e2e-tag.ts e2e-shots"
   },
   "dependencies": {
     "jszip": "^3.10.1",

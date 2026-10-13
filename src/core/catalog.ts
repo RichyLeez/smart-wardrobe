@@ -211,6 +211,7 @@ export const SUBTYPES: Record<Category, Record<string, SubtypeDefaults>> = {
     风衣: d(2, MILD_SEASONS, ['commute', 'casual', 'date'], ['minimal', 'vintage'], { fit: 'regular', length: 'long' }),
     大衣: d(3, ['winter', 'autumn'], ['commute', 'formal', 'date'], ['minimal', 'business'], { fit: 'regular', length: 'long' }),
     羽绒服: d(3, ['winter'], ['casual', 'travel', 'commute'], ['casual', 'outdoor'], { fit: 'loose', length: 'regular' }),
+    棉服: d(3, ['winter'], ['casual', 'travel', 'commute'], ['casual'], { fit: 'loose', length: 'regular' }),
     开衫: d(1, MILD_SEASONS, ['casual', 'commute', 'date'], ['minimal', 'sweet'], { fit: 'regular', length: 'regular' }),
     冲锋衣: d(2, MILD_SEASONS.concat('winter'), ['travel', 'sport'], ['outdoor', 'sporty'], { fit: 'regular', length: 'regular' }),
     皮衣: d(2, MILD_SEASONS, ['casual', 'date'], ['street', 'vintage'], { fit: 'slim', length: 'short' }),

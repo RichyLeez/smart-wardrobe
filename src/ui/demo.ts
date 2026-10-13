@@ -218,29 +218,30 @@ interface DemoSpec {
   length?: Length;
   rise?: Rise;
   favorite?: boolean;
+  material?: string;
 }
 
 const SPECS: DemoSpec[] = [
-  { name: '白衬衫', category: 'top', subtype: '衬衫', shape: 'shirt', hex: '#f3f3f0', favorite: true },
-  { name: '黑色T恤', category: 'top', subtype: 'T恤', shape: 'tee', hex: '#232326' },
-  { name: '雾蓝针织衫', category: 'top', subtype: '针织衫', shape: 'knit', hex: '#a7c3df' },
-  { name: '酒红毛衣', category: 'top', subtype: '毛衣', shape: 'knit', hex: '#7a2433' },
-  { name: '灰色卫衣', category: 'top', subtype: '卫衣', shape: 'hoodie', hex: '#8d8d92' },
-  { name: '藏青西裤', category: 'bottom', subtype: '西裤', shape: 'pants', hex: '#20294a', rise: 'high' },
-  { name: '水洗牛仔裤', category: 'bottom', subtype: '牛仔裤', shape: 'pants', hex: '#506f94' },
-  { name: '卡其阔腿裤', category: 'bottom', subtype: '阔腿裤', shape: 'wide', hex: '#c1a67a' },
-  { name: '黑色半身裙', category: 'bottom', subtype: '半身裙', shape: 'skirt', hex: '#252527' },
-  { name: '米色短裤', category: 'bottom', subtype: '短裤', shape: 'shorts', hex: '#d6c6a6' },
-  { name: '樱粉连衣裙', category: 'dress', subtype: '连衣裙', shape: 'dress', hex: '#eeb4c3' },
-  { name: '卡其风衣', category: 'outer', subtype: '风衣', shape: 'trench', hex: '#bb9f72', favorite: true },
-  { name: '炭灰西装', category: 'outer', subtype: '西装外套', shape: 'blazer', hex: '#4a4a4f' },
-  { name: '黑色羽绒服', category: 'outer', subtype: '羽绒服', shape: 'down', hex: '#212124' },
-  { name: '白色球鞋', category: 'shoes', subtype: '运动鞋', shape: 'sneakers', hex: '#efefec' },
-  { name: '黑色皮鞋', category: 'shoes', subtype: '皮鞋', shape: 'oxfords', hex: '#1d1d20' },
-  { name: '棕色短靴', category: 'shoes', subtype: '靴子', shape: 'boots', hex: '#6b4a30' },
-  { name: '驼色托特包', category: 'bag', subtype: '托特包', shape: 'tote', hex: '#a9794b' },
-  { name: '黑色皮带', category: 'belt', subtype: '皮带', shape: 'belt', hex: '#1f1f22' },
-  { name: '灰色围巾', category: 'scarf', subtype: '围巾', shape: 'scarf', hex: '#9b9ba0' },
+  { name: '白衬衫', category: 'top', subtype: '衬衫', shape: 'shirt', hex: '#f3f3f0', favorite: true, material: '棉 100%' },
+  { name: '黑色T恤', category: 'top', subtype: 'T恤', shape: 'tee', hex: '#232326', material: '棉 100%' },
+  { name: '雾蓝针织衫', category: 'top', subtype: '针织衫', shape: 'knit', hex: '#a7c3df', material: '粘纤 60%，锦纶 40%' },
+  { name: '酒红毛衣', category: 'top', subtype: '毛衣', shape: 'knit', hex: '#7a2433', material: '羊毛 70%，锦纶 30%' },
+  { name: '灰色卫衣', category: 'top', subtype: '卫衣', shape: 'hoodie', hex: '#8d8d92', material: '棉 80%，聚酯纤维 20%' },
+  { name: '藏青西裤', category: 'bottom', subtype: '西裤', shape: 'pants', hex: '#20294a', rise: 'high', material: '聚酯纤维 68%，粘纤 30%，氨纶 2%' },
+  { name: '水洗牛仔裤', category: 'bottom', subtype: '牛仔裤', shape: 'pants', hex: '#506f94', material: '棉 98%，氨纶 2%' },
+  { name: '卡其阔腿裤', category: 'bottom', subtype: '阔腿裤', shape: 'wide', hex: '#c1a67a', material: '棉 100%' },
+  { name: '黑色半身裙', category: 'bottom', subtype: '半身裙', shape: 'skirt', hex: '#252527', material: '聚酯纤维 100%' },
+  { name: '米色短裤', category: 'bottom', subtype: '短裤', shape: 'shorts', hex: '#d6c6a6', material: '棉 55%，麻 45%' },
+  { name: '樱粉连衣裙', category: 'dress', subtype: '连衣裙', shape: 'dress', hex: '#eeb4c3', material: '粘纤 100%' },
+  { name: '卡其风衣', category: 'outer', subtype: '风衣', shape: 'trench', hex: '#bb9f72', favorite: true, material: '棉 100%；里料 聚酯纤维 100%' },
+  { name: '炭灰西装', category: 'outer', subtype: '西装外套', shape: 'blazer', hex: '#4a4a4f', material: '羊毛 50%，聚酯纤维 50%' },
+  { name: '黑色羽绒服', category: 'outer', subtype: '羽绒服', shape: 'down', hex: '#212124', material: '锦纶 100%；填充 鸭绒 90%' },
+  { name: '白色球鞋', category: 'shoes', subtype: '运动鞋', shape: 'sneakers', hex: '#efefec', material: '皮革' },
+  { name: '黑色皮鞋', category: 'shoes', subtype: '皮鞋', shape: 'oxfords', hex: '#1d1d20', material: '皮革' },
+  { name: '棕色短靴', category: 'shoes', subtype: '靴子', shape: 'boots', hex: '#6b4a30', material: '麂皮' },
+  { name: '驼色托特包', category: 'bag', subtype: '托特包', shape: 'tote', hex: '#a9794b', material: '皮革' },
+  { name: '黑色皮带', category: 'belt', subtype: '皮带', shape: 'belt', hex: '#1f1f22', material: '皮革' },
+  { name: '灰色围巾', category: 'scarf', subtype: '围巾', shape: 'scarf', hex: '#9b9ba0', material: '羊毛 100%' },
 ];
 
 const SHAPES = new Set<Shape>([
@@ -283,6 +284,7 @@ export async function createDemoWardrobe(onProgress?: (done: number, total: numb
       fit: spec.fit ?? d.fit,
       length: spec.length ?? d.length,
       rise: spec.rise ?? d.rise,
+      material: spec.material,
       tags: ['示例'],
       favorite: !!spec.favorite,
       status: 'active',

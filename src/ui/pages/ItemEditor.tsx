@@ -1,6 +1,6 @@
 // 录入与编辑单品：拍照 → 本地去背（可手动擦除/恢复）→ 自动取色 → 点选字段。
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   alphaBBox,
   applyMaskAndCrop,
@@ -32,11 +32,14 @@ import {
   subtypesOf,
 } from '../../core/catalog';
 import { PALETTE, extractColors, suggestColors, type ColorSuggestion } from '../../core/color';
+import { analyzeSizeFit } from '../../core/sizefit';
 import { wearStats } from '../../core/stats';
+import { hasUsefulInfo, parseTagText, type TagParse } from '../../core/tag';
+import { isHosted } from '../../storage/hosted';
 import type { Category, ColorInfo, Fit, Item, Length, Occasion, Pattern, Rise, Season, Style, Warmth } from '../../core/types';
 import { ChipMulti, ChipSelect, Field, Segmented, Switch } from '../components/Controls';
 import { Icon } from '../components/Icon';
-import { ItemThumb } from '../components/Bits';
+import { ItemThumb, NoteList } from '../components/Bits';
 import {
   canvasToBlob,
   loadPhoto,
@@ -45,6 +48,7 @@ import {
   scaleCanvas,
   transparentBlob,
 } from '../imageTools';
+import { OCR_STAGE_TEXT, recognizeTagImage } from '../ocr';
 import { newId, useStore, type NewImage } from '../store';
 import { useUI } from '../ui';
 
@@ -84,8 +88,21 @@ interface Draft {
   rise?: Rise;
   material: string;
   brand: string;
+  styleNo: string;
+  size: string;
+  /** 吊牌识别：原文、来源、执行标准、吊牌标注的版型 */
+  tagRaw?: string;
+  tagSource?: 'ocr' | 'paste';
+  tagStandard?: string;
+  tagFit?: Fit;
   tags: string;
   favorite: boolean;
+}
+
+interface TagState {
+  parse: TagParse;
+  source: 'ocr' | 'paste';
+  text: string;
 }
 
 function draftFromItem(i: Item): Draft {
@@ -106,6 +123,12 @@ function draftFromItem(i: Item): Draft {
     rise: i.rise,
     material: i.material ?? '',
     brand: i.brand ?? '',
+    styleNo: i.styleNo ?? '',
+    size: i.size ?? '',
+    tagRaw: i.tagInfo?.raw,
+    tagSource: i.tagInfo?.source,
+    tagStandard: i.tagInfo?.standard,
+    tagFit: i.tagInfo?.fit,
     tags: i.tags.join('，'),
     favorite: i.favorite,
   };
@@ -124,8 +147,45 @@ const EMPTY_DRAFT: Draft = {
   styles: [],
   material: '',
   brand: '',
+  styleNo: '',
+  size: '',
   tags: '',
   favorite: false,
+};
+
+/** 选定子类时套用常用默认值（保暖度、季节、场合、风格、版型、长度、腰线） */
+function withSubtype(d: Draft, category: Category, subtype: string | undefined): Draft {
+  const app = FIELD_APPLICABILITY[category];
+  const base: Draft = {
+    ...d,
+    category,
+    fit: app.fit ? d.fit : undefined,
+    length: app.length ? d.length : undefined,
+    rise: app.rise ? d.rise : undefined,
+  };
+  if (!subtype) return { ...base, subtype: d.category === category ? d.subtype : null };
+  const def = defaultsFor(category, subtype);
+  return {
+    ...base,
+    subtype,
+    ...(def
+      ? {
+          warmth: def.warmth,
+          seasons: def.seasons,
+          occasions: def.occasions,
+          styles: def.styles,
+          fit: app.fit ? def.fit ?? base.fit ?? 'regular' : undefined,
+          length: app.length ? def.length ?? base.length ?? 'regular' : undefined,
+          rise: app.rise ? def.rise ?? base.rise ?? 'mid' : undefined,
+        }
+      : {}),
+  };
+}
+
+const TAG_SOURCE_TEXT: Record<NonNullable<TagParse['subtypeSource']>, string> = {
+  name: '来自品名',
+  standard: '来自执行标准',
+  keyword: '来自吊牌文字',
 };
 
 export function ItemEditor({ id }: { id: string | null }) {
@@ -143,6 +203,15 @@ export function ItemEditor({ id }: { id: string | null }) {
   const [draft, setDraft] = useState<Draft>(existing ? draftFromItem(existing) : EMPTY_DRAFT);
   const [showPalette, setShowPalette] = useState(false);
   const [showMore, setShowMore] = useState(false);
+  const [tagState, setTagState] = useState<TagState | null>(null);
+  const [tagApplied, setTagApplied] = useState<string[] | null>(null);
+  const [ocrStatus, setOcrStatus] = useState<string | null>(null);
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteText, setPasteText] = useState(existing?.tagInfo?.raw ?? '');
+  const tagCameraRef = useRef<HTMLInputElement>(null);
+  const tagAlbumRef = useRef<HTMLInputElement>(null);
+  // claude.ai 发布页面里不能联网下载识别组件，只提供粘贴文字
+  const canOcr = !isHosted();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const albumRef = useRef<HTMLInputElement>(null);
@@ -284,24 +353,110 @@ export function ItemEditor({ id }: { id: string | null }) {
 
   function chooseSubtype(s: string | null) {
     if (!s || !draft.category) return;
-    const def = defaultsFor(draft.category, s);
-    const app = FIELD_APPLICABILITY[draft.category];
-    setDraft((d) => ({
-      ...d,
-      subtype: s,
-      ...(def
-        ? {
-            warmth: def.warmth,
-            seasons: def.seasons,
-            occasions: def.occasions,
-            styles: def.styles,
-            fit: app.fit ? def.fit ?? d.fit ?? 'regular' : undefined,
-            length: app.length ? def.length ?? d.length ?? 'regular' : undefined,
-            rise: app.rise ? def.rise ?? d.rise ?? 'mid' : undefined,
-          }
-        : {}),
-      name: d.nameTouched ? d.name : autoName(d.color?.name, s),
-    }));
+    const cat = draft.category;
+    setDraft((d) => {
+      const next = withSubtype(d, cat, s);
+      return { ...next, name: d.nameTouched ? d.name : autoName(d.color?.name, s) };
+    });
+  }
+
+  // ---------- 吊牌识别 ----------
+
+  function baseFitOf(d: Draft): Fit | undefined {
+    if (d.tagFit) return d.tagFit;
+    return d.category && d.subtype ? defaultsFor(d.category, d.subtype)?.fit : undefined;
+  }
+
+  function handleTagText(text: string, source: 'ocr' | 'paste') {
+    setPasteText(text);
+    const parse = parseTagText(text);
+    setTagApplied(null);
+    if (!hasUsefulInfo(parse)) {
+      setTagState(null);
+      setShowPaste(true);
+      ui.toast(source === 'ocr' ? '没有从照片里认出吊牌信息，可以拍近一点、拍正一点再试，或者粘贴文字' : '没有认出品牌、号型、成分这类信息');
+      return;
+    }
+    setTagState({ parse, source, text });
+  }
+
+  async function onTagFile(file: File | undefined) {
+    if (!file) return;
+    setOcrStatus(OCR_STAGE_TEXT.download);
+    try {
+      const text = await recognizeTagImage(file, (stage, pct) =>
+        setOcrStatus(stage === 'recognize' ? `${OCR_STAGE_TEXT.recognize} ${pct}%` : OCR_STAGE_TEXT[stage]),
+      );
+      handleTagText(text, 'ocr');
+    } catch (e) {
+      ui.toast(e instanceof Error ? e.message : '识别失败，可以改用粘贴文字');
+      setShowPaste(true);
+    } finally {
+      setOcrStatus(null);
+      if (tagCameraRef.current) tagCameraRef.current.value = '';
+      if (tagAlbumRef.current) tagAlbumRef.current.value = '';
+    }
+  }
+
+  function applyTag() {
+    if (!tagState) return;
+    const { parse: p, source, text } = tagState;
+    let next: Draft = { ...draft };
+    const applied: string[] = [];
+    if (p.brand) {
+      next.brand = p.brand;
+      applied.push('品牌');
+    }
+    if (p.styleNo) {
+      next.styleNo = p.styleNo;
+      applied.push('货号');
+    }
+    const sizeText = [p.size && p.size !== p.sizeCode ? p.size : '', p.sizeCode ?? ''].filter(Boolean).join(' ');
+    if (sizeText) {
+      next.size = sizeText;
+      applied.push(p.sizeCode ? '号型' : '尺码');
+    }
+    if (p.materialText) {
+      next.material = p.materialText;
+      applied.push('成分');
+    }
+    if (p.category && (!next.category || (next.category === p.category && !next.subtype))) {
+      next = withSubtype(next, p.category, p.subtype);
+      applied.push('类别');
+    }
+    next.tagRaw = text;
+    next.tagSource = source;
+    next.tagStandard = p.standards.find((s) => s.category || s.label)?.code ?? p.standards[0]?.code;
+    next.tagFit = p.fit;
+    const cat = next.category;
+    if (cat) {
+      const app = FIELD_APPLICABILITY[cat];
+      if (app.length && p.length) {
+        next.length = p.length;
+        applied.push('长度');
+      }
+      if (app.rise && p.rise) {
+        next.rise = p.rise;
+        applied.push('腰线');
+      }
+      if (app.fit) {
+        const r = analyzeSizeFit({ category: cat, subtype: next.subtype ?? undefined, fit: baseFitOf(next), size: next.size }, store.settings.body);
+        const fit = r?.effectiveFit ?? p.fit;
+        if (fit) {
+          next.fit = fit;
+          applied.push(r?.effectiveFit && r.effectiveFit !== p.fit ? '版型（按你的身材换算）' : '版型');
+        }
+      }
+    }
+    if (p.warmthHint) {
+      next.warmth = p.warmthHint;
+      applied.push('保暖度');
+    }
+    next.name = draft.nameTouched ? draft.name : autoName(next.color?.name, next.subtype);
+    setDraft(next);
+    setTagApplied(applied);
+    setTagState(null);
+    setShowPaste(false);
   }
 
   async function save() {
@@ -347,6 +502,11 @@ export function ItemEditor({ id }: { id: string | null }) {
         rise: app.rise ? draft.rise : undefined,
         material: draft.material.trim() || undefined,
         brand: draft.brand.trim() || undefined,
+        styleNo: draft.styleNo.trim() || undefined,
+        size: draft.size.trim() || undefined,
+        tagInfo: draft.tagRaw
+          ? { raw: draft.tagRaw, source: draft.tagSource ?? 'paste', standard: draft.tagStandard, fit: draft.tagFit, updatedAt: now }
+          : undefined,
         tags: draft.tags
           .split(/[,，\s]+/)
           .map((t) => t.trim())
@@ -400,6 +560,9 @@ export function ItemEditor({ id }: { id: string | null }) {
 
   const cat = draft.category;
   const app = cat ? FIELD_APPLICABILITY[cat] : null;
+  const sizeFit = cat && draft.size.trim()
+    ? analyzeSizeFit({ category: cat, subtype: draft.subtype ?? undefined, fit: baseFitOf(draft), size: draft.size }, store.settings.body)
+    : null;
   const isNew = !existing;
   const steps: Array<{ key: Step; label: string }> = [
     { key: 'photo', label: '1 照片' },
@@ -587,6 +750,173 @@ export function ItemEditor({ id }: { id: string | null }) {
                 </div>
               </div>
 
+              <section className="tag-card" aria-label="吊牌信息">
+                <div className="tag-card-head">
+                  <Icon name="tag" />
+                  <strong>吊牌信息</strong>
+                  <span className="field-hint">可选，比照片估计更准</span>
+                </div>
+                <p className="small muted">
+                  拍吊牌或洗标，自动读出品牌、货号、号型、成分和版型字样{store.settings.body ? '，并和你的身材对比' : ''}。
+                </p>
+                <div className="row row-wrap">
+                  {canOcr && (
+                    <>
+                      <button type="button" className="btn btn-small" disabled={!!ocrStatus} onClick={() => tagCameraRef.current?.click()}>
+                        <Icon name="camera" />
+                        拍吊牌
+                      </button>
+                      <button type="button" className="btn btn-small" disabled={!!ocrStatus} onClick={() => tagAlbumRef.current?.click()}>
+                        <Icon name="image" />
+                        相册里的吊牌
+                      </button>
+                    </>
+                  )}
+                  <button type="button" className="btn btn-small" aria-expanded={showPaste} onClick={() => setShowPaste((v) => !v)}>
+                    {showPaste ? '收起文字' : pasteText ? '查看识别的文字' : '粘贴文字'}
+                  </button>
+                </div>
+                <input ref={tagCameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e: React.ChangeEvent<HTMLInputElement>) => onTagFile(e.target.files?.[0])} />
+                <input ref={tagAlbumRef} type="file" accept="image/*" hidden data-testid="tag-input" onChange={(e: React.ChangeEvent<HTMLInputElement>) => onTagFile(e.target.files?.[0])} />
+                {ocrStatus && (
+                  <p className="small tag-progress" role="status">
+                    {ocrStatus}
+                  </p>
+                )}
+                {showPaste && (
+                  <div className="tag-paste">
+                    <textarea
+                      id="tag-text"
+                      className="input"
+                      rows={5}
+                      value={pasteText}
+                      placeholder={'例如：\n品牌：优衣库\n号型：170/92A\n面料：棉 100%'}
+                      onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPasteText(e.target.value)}
+                      aria-label="吊牌文字"
+                    />
+                    <span className="field-hint">
+                      iPhone：用相机对准吊牌，点右下角的文字图标，选「拷贝全部」，再粘贴到这里。识别有错字可以直接改。
+                    </span>
+                    <button type="button" className="btn btn-small" disabled={!pasteText.trim()} onClick={() => handleTagText(pasteText, tagState?.source === 'ocr' ? 'ocr' : 'paste')}>
+                      读取这段文字
+                    </button>
+                  </div>
+                )}
+                {tagState && (
+                  <div className="tag-result" aria-label="识别结果">
+                    <dl>
+                      {tagState.parse.brand && (
+                        <>
+                          <dt>品牌</dt>
+                          <dd>{tagState.parse.brand}</dd>
+                        </>
+                      )}
+                      {tagState.parse.styleNo && (
+                        <>
+                          <dt>货号</dt>
+                          <dd>{tagState.parse.styleNo}</dd>
+                        </>
+                      )}
+                      {(tagState.parse.size || tagState.parse.sizeCode) && (
+                        <>
+                          <dt>{tagState.parse.sizeCode ? '号型' : '尺码'}</dt>
+                          <dd>
+                            {[tagState.parse.size !== tagState.parse.sizeCode ? tagState.parse.size : '', tagState.parse.sizeCode].filter(Boolean).join(' ')}
+                          </dd>
+                        </>
+                      )}
+                      {tagState.parse.materialText && (
+                        <>
+                          <dt>成分</dt>
+                          <dd>
+                            {tagState.parse.materialText}
+                            {tagState.parse.stretch ? '（有弹性）' : ''}
+                          </dd>
+                        </>
+                      )}
+                      {tagState.parse.subtype && tagState.parse.category && (
+                        <>
+                          <dt>款式</dt>
+                          <dd>
+                            {tagState.parse.subtype}（{CATEGORY_LABELS[tagState.parse.category]}，{TAG_SOURCE_TEXT[tagState.parse.subtypeSource ?? 'keyword']}）
+                            {cat && cat !== tagState.parse.category && (
+                              <span className="tag-conflict">和你选的「{CATEGORY_LABELS[cat]}」不一样，填入时不会改动类别</span>
+                            )}
+                          </dd>
+                        </>
+                      )}
+                      {tagState.parse.fit && (
+                        <>
+                          <dt>版型</dt>
+                          <dd>
+                            {FIT_LABELS[tagState.parse.fit]}（吊牌写着「{tagState.parse.fitWord}」）
+                          </dd>
+                        </>
+                      )}
+                      {tagState.parse.length && (
+                        <>
+                          <dt>长度</dt>
+                          <dd>吊牌写着「{tagState.parse.lengthWord}」</dd>
+                        </>
+                      )}
+                      {tagState.parse.rise && (
+                        <>
+                          <dt>腰线</dt>
+                          <dd>{RISE_LABELS[tagState.parse.rise]}</dd>
+                        </>
+                      )}
+                      {tagState.parse.warmthHint && (
+                        <>
+                          <dt>保暖度</dt>
+                          <dd>
+                            {WARMTH_LABELS[tagState.parse.warmthHint]}（{tagState.parse.warmthReason}）
+                          </dd>
+                        </>
+                      )}
+                      {tagState.parse.standards.filter((x) => x.label).map((x) => (
+                        <Fragment key={x.code}>
+                          <dt>执行标准</dt>
+                          <dd>
+                            {x.code}（{x.label}）
+                          </dd>
+                        </Fragment>
+                      ))}
+                    </dl>
+                    <div className="row">
+                      <button type="button" className="btn btn-primary btn-small grow" onClick={applyTag}>
+                        填入这些信息
+                      </button>
+                      <button type="button" className="btn btn-small btn-ghost" onClick={() => setTagState(null)}>
+                        不用了
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {tagApplied && tagApplied.length > 0 && (
+                  <p className="small tag-applied" role="status">
+                    已从吊牌填入：{tagApplied.join('、')}。可以在下面继续修改。
+                  </p>
+                )}
+                <div className="tag-fields">
+                  <label>
+                    品牌
+                    <input className="input" id="item-brand" value={draft.brand} placeholder="例如：优衣库" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set({ brand: e.target.value })} />
+                  </label>
+                  <label>
+                    货号
+                    <input className="input" id="item-style-no" value={draft.styleNo} placeholder="吊牌上的货号" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set({ styleNo: e.target.value })} />
+                  </label>
+                  <label>
+                    尺码 / 号型
+                    <input className="input" id="item-size" value={draft.size} placeholder="例如：M 170/92A" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set({ size: e.target.value })} />
+                  </label>
+                  <label className="tag-field-wide">
+                    成分 / 材质
+                    <input className="input" id="item-material" value={draft.material} placeholder="例如：棉 95%，氨纶 5%" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set({ material: e.target.value })} />
+                  </label>
+                </div>
+              </section>
+
               <Field label="类别">
                 <ChipSelect<Category> options={CATEGORIES} value={cat} labels={CATEGORY_LABELS} onChange={chooseCategory} allowEmpty={false} />
               </Field>
@@ -664,8 +994,18 @@ export function ItemEditor({ id }: { id: string | null }) {
               </Field>
 
               {app?.fit && (
-                <Field label="版型">
+                <Field label="版型" hint={draft.size.trim() ? '你穿上的效果' : undefined}>
                   <Segmented<Fit> options={['slim', 'regular', 'loose']} value={draft.fit} labels={FIT_LABELS} onChange={(v) => set({ fit: v })} />
+                  {sizeFit && (
+                    <div className="fit-analysis">
+                      <NoteList notes={sizeFit.notes} />
+                      {sizeFit.effectiveFit && sizeFit.effectiveFit !== draft.fit && (
+                        <button type="button" className="btn btn-small" onClick={() => set({ fit: sizeFit.effectiveFit })}>
+                          版型改为{FIT_LABELS[sizeFit.effectiveFit]}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </Field>
               )}
               {app?.length && cat && (
@@ -696,14 +1036,10 @@ export function ItemEditor({ id }: { id: string | null }) {
 
               <div className="field">
                 <button type="button" className="btn btn-ghost btn-small" style={{ justifySelf: 'start', paddingLeft: 0 }} onClick={() => setShowMore((v) => !v)} aria-expanded={showMore}>
-                  {showMore ? '收起更多信息' : '材质、品牌、标签'}
+                  {showMore ? '收起标签' : '自定义标签'}
                 </button>
                 {showMore && (
-                  <div style={{ display: 'grid', gap: 10 }}>
-                    <input className="input" placeholder="材质，例如：棉、羊毛、麂皮" value={draft.material} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set({ material: e.target.value })} aria-label="材质" />
-                    <input className="input" placeholder="品牌" value={draft.brand} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set({ brand: e.target.value })} aria-label="品牌" />
-                    <input className="input" placeholder="标签，用逗号分隔" value={draft.tags} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set({ tags: e.target.value })} aria-label="标签" />
-                  </div>
+                  <input className="input" placeholder="标签，用逗号分隔，例如：面试、旅行" value={draft.tags} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set({ tags: e.target.value })} aria-label="标签" />
                 )}
               </div>
 

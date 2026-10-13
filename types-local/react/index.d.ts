@@ -77,6 +77,6 @@ declare namespace React {
     setState(s: Partial<S> | ((prev: S) => Partial<S>)): void;
     render(): ReactNode;
   }
-  const Fragment: (props: { children?: ReactNode; key?: Key }) => ReactNode;
+  const Fragment: (props: { children?: ReactNode; key?: Key }) => ReactElement;
   const StrictMode: (props: { children?: ReactNode }) => ReactElement;
 }

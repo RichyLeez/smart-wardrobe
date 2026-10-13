@@ -65,8 +65,15 @@ export interface Item {
   fit?: Fit;
   length?: Length;
   rise?: Rise;
+  /** 材质或面料成分，例如"棉 95%，氨纶 5%"；吊牌识别时按规范格式填写 */
   material?: string;
   brand?: string;
+  /** 货号 / 款号 */
+  styleNo?: string;
+  /** 尺码或号型原文，例如 M、W30、175/92A */
+  size?: string;
+  /** 吊牌识别记录：保留原文，以后解析规则改进时可以重新解析 */
+  tagInfo?: TagRecord;
   tags: string[];
   favorite: boolean;
   status: ItemStatus;
@@ -77,6 +84,17 @@ export interface Item {
   updatedAt: number;
   /** 示例数据标记，方便一键清除 */
   demo?: boolean;
+}
+
+export interface TagRecord {
+  /** 识别或粘贴得到的吊牌文字 */
+  raw: string;
+  source: 'ocr' | 'paste';
+  /** 执行标准，例如 GB/T 22849-2014 */
+  standard?: string;
+  /** 吊牌上标注的版型（剪裁本身），用于和身材对比时作为基准 */
+  fit?: Fit;
+  updatedAt: number;
 }
 
 export type Gender = 'female' | 'male' | 'unspecified';
