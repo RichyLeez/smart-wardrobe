@@ -11,75 +11,13 @@
 
 import type { RGBAImage } from './background';
 import { deltaE, rgbToLab, type Lab } from './color';
+import { components, morph } from './mask';
 
 export interface HangerResult {
   /** 1 表示衣架像素 */
   mask: Uint8Array;
   found: boolean;
   pixels: number;
-}
-
-/** 正方形结构元素的腐蚀 / 膨胀（可分离的滑动最小 / 最大值） */
-function morph(src: Uint8Array, w: number, h: number, r: number, erode: boolean): Uint8Array {
-  const tmp = new Uint8Array(w * h);
-  const out = new Uint8Array(w * h);
-  const pick = (cur: number, v: number) => (erode ? Math.min(cur, v) : Math.max(cur, v));
-  const edgeVal = erode ? 0 : 0;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let v = erode ? 1 : 0;
-      for (let d = -r; d <= r; d++) {
-        const xx = x + d;
-        v = pick(v, xx < 0 || xx >= w ? edgeVal : src[y * w + xx]);
-        if (erode ? v === 0 : v === 1) break;
-      }
-      tmp[y * w + x] = v;
-    }
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let v = erode ? 1 : 0;
-      for (let d = -r; d <= r; d++) {
-        const yy = y + d;
-        v = pick(v, yy < 0 || yy >= h ? edgeVal : tmp[yy * w + x]);
-        if (erode ? v === 0 : v === 1) break;
-      }
-      out[y * w + x] = v;
-    }
-  }
-  return out;
-}
-
-/** 8 邻域连通块 */
-function components(mask: Uint8Array, w: number, h: number): { labels: Int32Array; count: number } {
-  const labels = new Int32Array(w * h);
-  const stack = new Int32Array(w * h);
-  let next = 0;
-  for (let s = 0; s < w * h; s++) {
-    if (!mask[s] || labels[s]) continue;
-    next++;
-    let top = 0;
-    stack[top++] = s;
-    labels[s] = next;
-    while (top > 0) {
-      const i = stack[--top];
-      const x = i % w;
-      const y = (i - x) / w;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const xx = x + dx;
-          const yy = y + dy;
-          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-          const j = yy * w + xx;
-          if (mask[j] && !labels[j]) {
-            labels[j] = next;
-            stack[top++] = j;
-          }
-        }
-      }
-    }
-  }
-  return { labels, count: next };
 }
 
 export function detectHanger(alpha: Uint8Array, img: RGBAImage): HangerResult {
@@ -102,7 +40,7 @@ export function detectHanger(alpha: Uint8Array, img: RGBAImage): HangerResult {
   const opened = morph(morph(fg, w, h, r, true), w, h, r, false);
 
   // 衣身：开运算后的最大连通块（以及面积不小于它 20% 的块，例如两只鞋）
-  const { labels: bl, count: bc } = components(opened, w, h);
+  const { labels: bl, count: bc } = components(opened, w, h, true);
   if (bc === 0) return empty;
   const areas = new Array(bc + 1).fill(0);
   for (let i = 0; i < n; i++) if (bl[i]) areas[bl[i]]++;
@@ -145,7 +83,7 @@ export function detectHanger(alpha: Uint8Array, img: RGBAImage): HangerResult {
   // 细的部分
   const thin = new Uint8Array(n);
   for (let i = 0; i < n; i++) if (fg[i] && !body[i]) thin[i] = 1;
-  const { labels, count } = components(thin, w, h);
+  const { labels, count } = components(thin, w, h, true);
   const stats = Array.from({ length: count + 1 }, () => ({
     n: 0,
     above: 0,

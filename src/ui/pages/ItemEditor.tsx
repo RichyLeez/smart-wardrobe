@@ -34,8 +34,10 @@ import {
 } from '../../core/catalog';
 import { PALETTE, extractColors, suggestColors, type ColorSuggestion } from '../../core/color';
 import { backImageIds } from '../../core/backup';
-import { detectHanger, removeMasked } from '../../core/hanger';
+import { cleanupCut, isLowContrast } from '../../core/autocut';
+import { removeMasked } from '../../core/hanger';
 import { smartCut } from '../../core/smartcut';
+import { colorPlus } from '../../core/pending';
 import { defaultOpenable } from '../../core/styling';
 import { analyzeSizeFit } from '../../core/sizefit';
 import { wearStats } from '../../core/stats';
@@ -55,7 +57,8 @@ import {
 } from '../imageTools';
 import { OCR_STAGE_TEXT, recognizeTagImage } from '../ocr';
 import { newId, useImageUrl, useStore, type NewImage } from '../store';
-import { useUI } from '../ui';
+import { useUI, type Overlay } from '../ui';
+import * as db from '../../storage/db';
 
 type Step = 'photo' | 'cutout' | 'info';
 type Tool = 'none' | 'erase' | 'restore';
@@ -214,7 +217,7 @@ const TAG_SOURCE_TEXT: Record<NonNullable<TagParse['subtypeSource']>, string> = 
   keyword: '来自吊牌文字',
 };
 
-export function ItemEditor({ id }: { id: string | null }) {
+export function ItemEditor({ id, back }: { id: string | null; back?: 'review' }) {
   const store = useStore();
   const ui = useUI();
   const existing = id ? store.items.find((i) => i.id === id) ?? null : null;
@@ -227,6 +230,8 @@ export function ItemEditor({ id }: { id: string | null }) {
   const [noRemoval, setNoRemoval] = useState(false);
   /** 认出的"衣架"其实是衣服的一部分时，用户可以保留 */
   const [keepHanger, setKeepHanger] = useState(false);
+  /** 自动补回衣服上和背景同色的部分（白底上的白色印花、白条纹） */
+  const [fillGaps, setFillGaps] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   /** 正在拍的是正面还是背面 */
@@ -257,10 +262,13 @@ export function ItemEditor({ id }: { id: string | null }) {
   const stats = existing ? wearStats(store.records).get(existing.id) : undefined;
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
+  /** 从待整理进来的，关掉后回到待整理 */
+  const closeEditor = () => (back ? ui.open({ kind: back } as Overlay) : ui.close());
+  const isPending = existing?.status === 'pending';
 
   // ---------- 照片与去背 ----------
 
-  async function onFile(file: File | undefined) {
+  async function onFile(file: Blob | undefined) {
     if (!file) return;
     setBusy('正在读取照片…');
     try {
@@ -286,6 +294,7 @@ export function ItemEditor({ id }: { id: string | null }) {
       });
       setNoRemoval((smart ?? res).coverage > 0.97);
       setKeepHanger(false);
+      setFillGaps(true);
       setTool('none');
       setStep('cutout');
     } catch (e) {
@@ -294,6 +303,24 @@ export function ItemEditor({ id }: { id: string | null }) {
       setBusy(null);
       if (cameraRef.current) cameraRef.current.value = '';
       if (albumRef.current) albumRef.current.value = '';
+    }
+  }
+
+  /** 用存档的原图重新去背（批量录入后去背不准时，不用重拍） */
+  async function recutFromOriginal() {
+    const id = existing?.images.original;
+    if (!id) return;
+    setBusy('正在读取原图…');
+    try {
+      const src = await db.imageSrc(id);
+      if (!src) throw new Error('原图找不到了，请重新拍照');
+      const blob = await (await fetch(src.url)).blob();
+      if (src.revoke) URL.revokeObjectURL(src.url);
+      setBusy(null);
+      await onFile(blob);
+    } catch (e) {
+      setBusy(null);
+      ui.toast(e instanceof Error ? e.message : '原图读取失败');
     }
   }
 
@@ -329,22 +356,32 @@ export function ItemEditor({ id }: { id: string | null }) {
     if (work) void recompute(work, m);
   }
 
-  // 挂着拍的衣服：自动去背后衣架常和衣服连在一起，找出挂钩和伸出肩外的横杆
+  // 自动去背后的整理：补回和背景同色的衣服部分（白底上的白色印花、白条纹），
+  // 再找衣架（挂着拍时挂钩和伸出肩外的横杆常和衣服连在一起）
   const workAuto = work?.auto;
-  const hanger = useMemo(() => (work && workAuto ? detectHanger(workAuto, work.rgba) : null), [workAuto]);
+  const cleaned = useMemo(() => (work && workAuto ? cleanupCut(workAuto, work.rgba) : null), [workAuto]);
+  const hanger = cleaned?.hanger;
+  const gapsFound = !!cleaned && cleaned.gaps.addedCount > 0;
 
   const currentAlpha = (w: Work) => {
     if (noRemoval) return new Uint8Array(w.auto.length).fill(255);
-    // 先去掉衣架，再叠加手动笔刷（"恢复"笔刷涂到的地方以笔刷为准）
-    const auto = hanger?.found && !keepHanger ? removeMasked(w.auto, hanger.mask) : w.auto;
+    // 先补回、去掉衣架，再叠加手动笔刷（笔刷涂到的地方以笔刷为准）
+    let auto = cleaned && fillGaps ? cleaned.filled : w.auto;
+    if (hanger?.found && !keepHanger) auto = removeMasked(auto, hanger.mask);
     return combineMask(auto, w.override);
   };
+  // 按补回后的结果判断（关掉补回开关时提示也不消失）
+  const lowContrast = useMemo(
+    () => (work && cleaned && !noRemoval ? isLowContrast(work.rgba, cleaned.filled, work.bg, cleaned.gaps) : false),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cleaned, noRemoval],
+  );
 
   useEffect(() => {
     if (step !== 'cutout' || !work || !canvasRef.current) return;
     renderMaskPreview(canvasRef.current, work.rgba, currentAlpha(work));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, work, noRemoval, hanger, keepHanger]);
+  }, [step, work, noRemoval, cleaned, keepHanger, fillGaps]);
 
   function paintAt(e: React.PointerEvent<HTMLCanvasElement>) {
     const c = canvasRef.current;
@@ -420,7 +457,7 @@ export function ItemEditor({ id }: { id: string | null }) {
 
   function autoName(colorName: string | undefined, subtype: string | null): string {
     if (!subtype) return colorName ?? '';
-    return `${colorName ?? ''}${subtype}`;
+    return colorPlus(colorName ?? '', subtype);
   }
 
   function chooseCategory(c: Category | null) {
@@ -616,7 +653,8 @@ export function ItemEditor({ id }: { id: string | null }) {
         favorite: draft.favorite,
         openable: draft.category === 'outer' && !draft.photoOpen ? draft.openable : undefined,
         photoOpen: draft.category === 'outer' && draft.photoOpen ? true : undefined,
-        status: existing?.status ?? 'active',
+        // 待整理的单品保存即确认
+        status: existing && existing.status !== 'pending' ? existing.status : 'active',
         images: imageRefs!,
         imageAspect: aspect,
         backAspect: imageRefs!.backCutout ? backAspect : undefined,
@@ -626,8 +664,8 @@ export function ItemEditor({ id }: { id: string | null }) {
       };
       await store.saveItem(item, images, replaced);
       if (existing) {
-        ui.toast('已保存');
-        ui.close();
+        ui.toast(isPending ? '已确认，放进衣橱了' : '已保存');
+        closeEditor();
       } else {
         ui.toast(`已录入 ${name}`, { label: '继续录入', run: () => ui.open({ kind: 'item', id: null }) });
         ui.close();
@@ -644,7 +682,7 @@ export function ItemEditor({ id }: { id: string | null }) {
     const status = existing.status === 'active' ? 'archived' : 'active';
     await store.saveItem({ ...existing, status, updatedAt: Date.now() });
     ui.toast(status === 'archived' ? '已归档，不再参与推荐' : '已恢复到衣橱');
-    ui.close();
+    closeEditor();
   }
 
   async function remove() {
@@ -658,7 +696,7 @@ export function ItemEditor({ id }: { id: string | null }) {
     if (!ok) return;
     await store.deleteItem(existing.id);
     ui.toast('已删除');
-    ui.close();
+    closeEditor();
   }
 
   // ---------- 渲染 ----------
@@ -691,13 +729,13 @@ export function ItemEditor({ id }: { id: string | null }) {
     <div className="overlay" role="dialog" aria-modal="true" aria-label={isNew ? '录入单品' : '编辑单品'}>
       <div className="overlay-inner">
         <header className="topbar">
-          <button type="button" className="icon-btn" aria-label="关闭" onClick={() => ui.close()}>
+          <button type="button" className="icon-btn" aria-label="关闭" onClick={closeEditor}>
             <Icon name="close" />
           </button>
           <h1>{isNew ? '录入单品' : existing.name}</h1>
           {step === 'info' ? (
             <button type="button" className="btn btn-primary btn-small" disabled={!!busy} onClick={save}>
-              保存
+              {isPending ? '确认' : '保存'}
             </button>
           ) : (
             <span style={{ width: 40 }} />
@@ -755,6 +793,7 @@ export function ItemEditor({ id }: { id: string | null }) {
                 <li>光线均匀，避免强烈阴影和反光。</li>
                 <li>上衣和外套尽量把袖子摆开，换装时更像穿在身上。</li>
                 <li>挂在衣架上拍也可以，挂钩和横杆会自动去掉。</li>
+                <li>白色或带白边、白字的衣服，用深色床单或地板当背景。</li>
                 <li>外套拉好拉链拍，搭配时可以选择敞开或合上；没拉拉链拍的，录入时打开「照片里是敞开的」。</li>
               </ul>
               )}
@@ -762,9 +801,14 @@ export function ItemEditor({ id }: { id: string | null }) {
                 <button type="button" className="btn btn-ghost" onClick={cancelBack}>
                   先不拍背面
                 </button>
-              ) : existing && (
+              ) : existing ? (
                 <button type="button" className="btn btn-ghost" onClick={() => setStep('info')}>
                   不换照片，返回
+                </button>
+              ) : (
+                <button type="button" className="btn btn-ghost" onClick={() => ui.open({ kind: 'batch' })}>
+                  <Icon name="layers" />
+                  衣服多？一次录好几件
                 </button>
               )}
             </div>
@@ -793,6 +837,19 @@ export function ItemEditor({ id }: { id: string | null }) {
                 {busy && <div className="busy">{busy}</div>}
               </div>
               <Switch label="不去背，保留原图" checked={noRemoval} onChange={setNoRemoval} hint="背景太杂时可以先保留原图，换装时会显示为矩形照片" />
+              {!noRemoval && lowContrast && (
+                <div className="warnbox">
+                  衣服上有和背景很接近的颜色。{gapsFound ? '中间被挖掉的已经按衣服形状补回来了；' : ''}边上的（领口、袖口、白鞋底）如果被去掉了，选「恢复」沿着它涂一笔。下次换深色背景拍会准很多。
+                </div>
+              )}
+              {!noRemoval && gapsFound && (
+                <Switch
+                  label="补回和背景同色的部分"
+                  checked={fillGaps}
+                  onChange={setFillGaps}
+                  hint="白底上的白色印花、白条纹会被当成背景挖掉，已经按衣服的形状补回来。如果补上的地方其实是镂空（比如包带中间），关掉。"
+                />
+              )}
               {!noRemoval && hanger?.found && (
                 <Switch
                   label="去掉衣架"
@@ -868,6 +925,11 @@ export function ItemEditor({ id }: { id: string | null }) {
 
           {step === 'info' && (
             <div>
+              {isPending && (
+                <div className="warnbox" style={{ marginBottom: 12 }}>
+                  这件是批量录入的，还没确认。{existing?.reviewNote ? `${existing.reviewNote}。` : ''}改好后点「确认」，才会参与推荐。
+                </div>
+              )}
               <div className="row" style={{ alignItems: 'flex-start', gap: 14, marginBottom: 6 }}>
                 <div style={{ width: 104, height: 128, flex: 'none' }}>
                   {preview ? (
@@ -900,6 +962,12 @@ export function ItemEditor({ id }: { id: string | null }) {
                         <Icon name="camera" />
                         重新拍照
                       </button>
+                      {existing.images.original && !db.isVirtualImage(existing.images.original) && (
+                        <button type="button" className="btn btn-small" disabled={!!busy} onClick={() => void recutFromOriginal()}>
+                          <Icon name="refresh" />
+                          用原图重新去背
+                        </button>
+                      )}
                       {existing.status === 'active' && (
                         <button type="button" className="btn btn-small" onClick={() => ui.open({ kind: 'match', itemId: existing.id })}>
                           <Icon name="sparkle" />
@@ -1283,9 +1351,11 @@ export function ItemEditor({ id }: { id: string | null }) {
               </button>
               {existing && (
                 <div className="row" style={{ marginTop: 10 }}>
-                  <button type="button" className="btn grow" onClick={toggleArchive}>
-                    {existing.status === 'active' ? '归档' : '恢复到衣橱'}
-                  </button>
+                  {!isPending && (
+                    <button type="button" className="btn grow" onClick={toggleArchive}>
+                      {existing.status === 'active' ? '归档' : '恢复到衣橱'}
+                    </button>
+                  )}
                   <button type="button" className="btn btn-danger grow" onClick={remove}>
                     删除
                   </button>

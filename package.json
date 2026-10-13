@@ -14,7 +14,8 @@
     "e2e:tag": "node --import tsx scripts/e2e-tag.ts e2e-shots",
     "e2e:3d": "node --import tsx scripts/e2e-3d.ts e2e-shots",
     "e2e:smart": "node --import tsx scripts/e2e-smart.ts e2e-shots",
-    "e2e:styling": "node --import tsx scripts/e2e-styling.ts e2e-shots"
+    "e2e:styling": "node --import tsx scripts/e2e-styling.ts e2e-shots",
+    "e2e:batch": "node --import tsx scripts/e2e-batch.ts e2e-shots"
   },
   "dependencies": {
     "jszip": "^3.10.1",

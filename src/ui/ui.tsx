@@ -20,7 +20,9 @@ export interface RecordDraft {
 }
 
 export type Overlay = (
-  | { kind: 'item'; id: string | null }
+  | { kind: 'item'; id: string | null; /** 关闭后回到哪个全屏页 */ back?: 'review' }
+  | { kind: 'batch' }
+  | { kind: 'review' }
   | { kind: 'record'; draft: RecordDraft }
   | { kind: 'settings' }
   | { kind: 'view3d'; itemIds: string[]; layout?: Record<string, Placement>; styling?: Styling; title?: string }

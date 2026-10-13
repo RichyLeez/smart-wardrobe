@@ -24,6 +24,8 @@ export interface RemovalOptions {
   removeHoles?: boolean;
   /** 边缘羽化半径（像素） */
   feather?: number;
+  /** 只保留面积不小于最大一块这个比例的前景块（默认 3%） */
+  minPieceRatio?: number;
 }
 
 export interface RemovalResult {
@@ -162,7 +164,7 @@ export function removeBackground(
   for (let i = 0; i < n; i++) fg[i] = isBg[i] ? 0 : 1;
 
   if (options.removeHoles !== false) removeEnclosedHoles(fg, lab, bg.lab, width, height, t * 0.5, n * 0.003);
-  keepMainComponents(fg, width, height, 0.03);
+  keepMainComponents(fg, width, height, options.minPieceRatio ?? 0.03);
 
   const alpha = featherMask(fg, width, height, options.feather ?? 1);
   let count = 0;

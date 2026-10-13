@@ -24,11 +24,12 @@ export function WardrobePage() {
   const stats = useMemo(() => wearStats(records), [records]);
 
   const active = items.filter((i) => i.status === 'active');
+  const pending = items.filter((i) => i.status === 'pending').length;
   const counts = useMemo(() => {
     const c = new Map<Filter, number>();
     for (const i of items) {
       if (i.status === 'archived') c.set('archived', (c.get('archived') ?? 0) + 1);
-      else {
+      else if (i.status === 'active') {
         c.set(i.category, (c.get(i.category) ?? 0) + 1);
         if (i.favorite) c.set('favorite', (c.get('favorite') ?? 0) + 1);
       }
@@ -97,13 +98,29 @@ export function WardrobePage() {
     <>
       <header className="topbar">
         <h1>衣橱</h1>
-        <button type="button" className="btn btn-primary btn-small" onClick={() => ui.open({ kind: 'item', id: null })}>
-          <Icon name="plus" />
-          录入单品
-        </button>
+        <div className="topbar-actions">
+          <button type="button" className="btn btn-small" onClick={() => ui.open({ kind: 'batch' })}>
+            <Icon name="layers" />
+            批量录入
+          </button>
+          <button type="button" className="btn btn-primary btn-small" onClick={() => ui.open({ kind: 'item', id: null })}>
+            <Icon name="plus" />
+            录入单品
+          </button>
+        </div>
       </header>
       <div className="page">
-        {ready && items.length > 0 && (
+        {pending > 0 && (
+          <button type="button" className="callout" style={{ marginBottom: 12 }} onClick={() => ui.open({ kind: 'review' })}>
+            <Icon name="layers" />
+            <span>
+              <strong>{pending} 件待整理</strong>
+              <br />
+              批量录入的单品，类别是按轮廓猜的，确认一下才会参与推荐。
+            </span>
+          </button>
+        )}
+        {ready && active.length + (counts.get('archived') ?? 0) > 0 && (
           <>
             <div className="search">
               <Icon name="search" />
@@ -136,14 +153,20 @@ export function WardrobePage() {
         {ready && items.length === 0 && (
           <div className="empty">
             <h2>衣橱还是空的</h2>
-            <p>拍一张平铺的衣服照片开始录入。深色衣物用浅色背景拍，浅色衣物用深色背景拍，去背效果最好。</p>
-            <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
-              <Icon name="camera" />
-              录入单品
-            </button>
+            <p>拍一张平铺的衣服照片开始录入。深色衣物用浅色背景拍，浅色衣物用深色背景拍，去背效果最好。衣服多的话用「批量录入」，一次选很多张照片。</p>
+            <div className="row" style={{ justifyContent: 'center' }}>
+              <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
+                <Icon name="camera" />
+                录入单品
+              </button>
+              <button type="button" className="btn" onClick={() => ui.open({ kind: 'batch' })}>
+                <Icon name="layers" />
+                批量录入
+              </button>
+            </div>
           </div>
         )}
-        {items.length > 0 && shown.length === 0 && <p className="muted small" style={{ marginTop: 24 }}>没有符合条件的单品。</p>}
+        {active.length + (counts.get('archived') ?? 0) > 0 && shown.length === 0 && <p className="muted small" style={{ marginTop: 24 }}>没有符合条件的单品。</p>}
         {groups ? (
           groups.map((g) => (
             <section key={g.value || 'none'} className="group-block" aria-label={g.label}>

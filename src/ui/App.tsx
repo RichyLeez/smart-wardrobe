@@ -2,6 +2,8 @@ import { Component, useEffect, type ReactNode } from 'react';
 import { Icon } from './components/Icon';
 import { BuilderPage } from './pages/Builder';
 import { ItemEditor } from './pages/ItemEditor';
+import { BatchImport } from './pages/BatchImport';
+import { Review } from './pages/Review';
 import { RecordEditor } from './pages/RecordEditor';
 import { RecordsPage } from './pages/Records';
 import { SettingsPage } from './pages/Settings';
@@ -165,7 +167,9 @@ function Shell() {
         </div>
       </nav>
       <ErrorBoundary resetKey={overlay ? `${overlay.kind}-${overlay.nonce}` : 'none'}>
-        {overlay?.kind === 'item' && <ItemEditor key={overlay.nonce} id={overlay.id} />}
+        {overlay?.kind === 'item' && <ItemEditor key={overlay.nonce} id={overlay.id} back={overlay.back} />}
+        {overlay?.kind === 'batch' && <BatchImport key={overlay.nonce} />}
+        {overlay?.kind === 'review' && <Review key={overlay.nonce} />}
         {overlay?.kind === 'record' && <RecordEditor key={overlay.nonce} draft={overlay.draft} />}
         {overlay?.kind === 'settings' && <SettingsPage />}
         {overlay?.kind === 'match' && <MatchPage key={overlay.nonce} itemId={overlay.itemId} />}

@@ -97,6 +97,7 @@ export function TodayPage() {
   const wornItems = worn ? worn.itemIds.map((id) => items.find((i) => i.id === id)).filter((i): i is Item => !!i) : [];
   const idle = useMemo(() => idleItems(items, wearStats(records), today.date, 30), [items, records, today.date]);
   const recsVisible = !worn || showRecs;
+  const pendingCount = items.filter((i) => i.status === 'pending').length;
 
   // 有保存的位置且天气过期时，自动联网更新一次
   useEffect(() => {
@@ -236,7 +237,7 @@ export function TodayPage() {
     </header>
   );
 
-  if (items.length === 0) {
+  if (items.length === pendingCount) {
     return (
       <>
         {header}
@@ -245,17 +246,35 @@ export function TodayPage() {
             <div className="stage">
               <Mannequin body={settings.body} items={[]} />
             </div>
-            <h2>先把衣橱搬进来</h2>
-            <p>把衣服平铺拍一张，应用会自动去掉背景、识别颜色。录入几件上衣和下装后，这里每天会给出搭配建议。</p>
-            <div className="row" style={{ justifyContent: 'center' }}>
-              <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
-                <Icon name="camera" />
-                录入第一件
-              </button>
-              <button type="button" className="btn" disabled={!!demoBusy} onClick={loadDemo}>
-                {demoBusy ?? '用示例衣橱试试'}
-              </button>
-            </div>
+            {pendingCount > 0 ? (
+              <>
+                <h2>还有 {pendingCount} 件待整理</h2>
+                <p>批量录入的单品，类别是按轮廓猜的。在待整理里点一下确认，这里就会开始给出搭配建议。</p>
+                <div className="row" style={{ justifyContent: 'center' }}>
+                  <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'review' })}>
+                    去整理
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2>先把衣橱搬进来</h2>
+                <p>把衣服平铺拍一张，应用会自动去掉背景、识别颜色。录入几件上衣和下装后，这里每天会给出搭配建议。</p>
+                <div className="row" style={{ justifyContent: 'center' }}>
+                  <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
+                    <Icon name="camera" />
+                    录入第一件
+                  </button>
+                  <button type="button" className="btn" onClick={() => ui.open({ kind: 'batch' })}>
+                    <Icon name="layers" />
+                    批量录入
+                  </button>
+                </div>
+                <button type="button" className="btn btn-ghost" style={{ marginTop: 8 }} disabled={!!demoBusy} onClick={loadDemo}>
+                  {demoBusy ?? '用示例衣橱试试'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </>
@@ -483,6 +502,16 @@ export function TodayPage() {
         )}
 
         <div className="section" style={{ display: 'grid', gap: 8 }}>
+          {pendingCount > 0 && (
+            <button type="button" className="callout" onClick={() => ui.open({ kind: 'review' })}>
+              <Icon name="layers" />
+              <span>
+                <strong>{pendingCount} 件待整理</strong>
+                <br />
+                确认类别后才会参与推荐。
+              </span>
+            </button>
+          )}
           {!settings.body && (
             <button type="button" className="callout" onClick={() => ui.open({ kind: 'settings' })}>
               <Icon name="ruler" />

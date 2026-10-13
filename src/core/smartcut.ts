@@ -24,6 +24,8 @@ export interface SmartCutOptions {
   maxSide?: number;
   /** 边缘羽化半径（像素） */
   feather?: number;
+  /** 只保留面积不小于最大一块这个比例的前景块；一张照片拍好几件时调小，避免把袜子这类小件当碎块去掉 */
+  minPieceRatio?: number;
 }
 
 export interface SmartCutResult {
@@ -549,7 +551,7 @@ export function smartCut(img: RGBAImage, options: SmartCutOptions = {}): SmartCu
   };
   applyStrokes();
   fillSmallHoles(fg, W, H, N * 0.002);
-  keepMainComponents(fg, W, H, 0.03);
+  keepMainComponents(fg, W, H, options.minPieceRatio ?? 0.03);
   applyStrokes();
   let count = 0;
   for (let i = 0; i < N; i++) count += fg[i];
