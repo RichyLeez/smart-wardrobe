@@ -185,7 +185,7 @@ try {
   check((await previewAlpha(page, 0.5, 0.45)) === 255, '涂抹后重新贴合边缘，衣物仍完整');
 
   await page.getByRole('button', { name: '下一步' }).click();
-  await page.getByText('吊牌信息').first().waitFor();
+  await page.getByText('品牌和尺码').first().waitFor();
   check(await page.getByRole('button', { name: '拍背面' }).isVisible(), '信息页可以加背面照片');
 
   // 背面

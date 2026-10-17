@@ -2,6 +2,7 @@
 // 坐标系：单位为 cm，x 以身体中线为 0（向右为正），y 从头顶向下为正。
 
 import { isSkirtLike } from './catalog';
+import { flatEase, frontEase } from './measure';
 import type { BodyGoal, BodyProfile, Category, Gender, Item, MeasureKey, Placement } from './types';
 
 export const DEFAULT_BODY: BodyProfile = {
@@ -206,6 +207,10 @@ export interface MannequinGeometry {
   ankleHalf: number;
   wristY: number;
   armHalf: number;
+  /** 胸围、腰围、臀围（cm），按平铺尺寸换算衣长时用 */
+  chest: number;
+  waist: number;
+  hip: number;
 }
 
 export function mannequinGeometry(b: BodyProfile): MannequinGeometry {
@@ -243,6 +248,9 @@ export function mannequinGeometry(b: BodyProfile): MannequinGeometry {
     ankleHalf: H * 0.017,
     wristY: crotchY + H * 0.01,
     armHalf: H * 0.026,
+    chest: b.chest,
+    waist: b.waist,
+    hip: b.hip,
   };
 }
 
@@ -355,9 +363,13 @@ export interface GarmentRect {
   height: number;
   /** 这条线（y）以上不画：连帽上衣摊开的帽子，穿着时垂在背后 */
   clipTop?: number;
+  /** 对齐点（肩线或腰头的中点）；调大小时以它为基准 */
+  anchorX?: number;
+  anchorY?: number;
 }
 
-type PlaceableItem = Pick<Item, 'category' | 'subtype' | 'length' | 'rise' | 'imageAspect' | 'hoodTop' | 'hoodUp'>;
+type PlaceableItem = Pick<Item, 'category' | 'subtype' | 'length' | 'rise' | 'imageAspect' | 'hoodTop' | 'hoodUp'> &
+  Partial<Pick<Item, 'shape' | 'sizeAdjust' | 'fit'>>;
 
 /** 连帽上衣：试穿时放下的帽子占图片高度的比例（只对上衣、外套有效） */
 export function hoodOf(item: PlaceableItem): number {
@@ -404,8 +416,76 @@ function centeredRect(aspect: number, cx: number, cy: number, targetH: number, m
   return { ...r, y: cy - r.height / 2 };
 }
 
-/** 按类别把衣物贴图放到人台对应位置 */
+/**
+ * 按类别把衣物贴图放到人台对应位置。
+ * 上衣、外套、连衣裙、下装量过基准宽度（item.shape）时按身材定大小（placeByShape），
+ * 否则按类别和长度字段定（照片里衣服的大小、袖子张开多少会影响结果）。
+ * item.sizeAdjust 是用户在录入页调过的大小，以对齐线（肩线、腰头）的中点为基准缩放。
+ */
 export function placeGarment(item: PlaceableItem, g: MannequinGeometry): GarmentRect {
+  const r = (item.shape && placeByShape(item, g)) || placeByLabel(item, g);
+  const k = item.sizeAdjust && item.sizeAdjust > 0 ? Math.max(0.6, Math.min(1.6, item.sizeAdjust)) : 1;
+  if (k === 1) return r;
+  const ax = r.anchorX ?? r.x + r.width / 2;
+  const ay = r.anchorY ?? r.y;
+  const out: GarmentRect = {
+    x: ax - (ax - r.x) * k,
+    y: ay - (ay - r.y) * k,
+    width: r.width * k,
+    height: r.height * k,
+    anchorX: ax,
+    anchorY: ay,
+  };
+  if (r.clipTop !== undefined) out.clipTop = ay - (ay - r.clipTop) * k;
+  return out;
+}
+
+/** 平铺时基准段的真实宽度（cm）和穿上后正面看到的宽度（cm），以及对齐线在人台上的高度 */
+function shapeTargets(item: PlaceableItem, g: MannequinGeometry): { flat: number; front: number; anchorY: number } | null {
+  const H = g.height;
+  const cat = item.category;
+  if (cat === 'top' || cat === 'outer' || cat === 'dress') {
+    const front = Math.max(g.chestHalf * 2, g.shoulderHalf * 1.6) * frontEase(cat, item.fit);
+    const flat = (g.chest / 2) * flatEase(cat, item.fit);
+    const anchorY = g.shoulderY - H * (cat === 'outer' ? 0.02 : cat === 'dress' ? 0.012 : 0.016);
+    return { flat, front, anchorY };
+  }
+  if (cat === 'bottom') {
+    // 裤腰/裙腰的位置：高腰在腰线，中腰、低腰往下，围度在腰围和臀围之间
+    const t = item.rise === 'high' ? 0 : item.rise === 'low' ? 0.7 : 0.3;
+    const anchorY =
+      item.rise === 'high' ? g.waistY - H * 0.012 : item.rise === 'low' ? g.waistY + H * 0.055 : g.waistY + H * 0.028;
+    const circ = g.waist + (g.hip - g.waist) * t;
+    const half = g.waistHalf + (g.hipHalf - g.waistHalf) * t;
+    return { flat: (circ / 2) * flatEase(cat, item.fit), front: half * 2 * frontEase(cat, item.fit), anchorY };
+  }
+  return null;
+}
+
+/** 按量好的基准宽度摆放：横向按身体宽度、纵向按真实衣长 */
+function placeByShape(item: PlaceableItem, g: MannequinGeometry): GarmentRect | null {
+  const shape = item.shape!;
+  const t = shapeTargets(item, g);
+  const a = item.imageAspect > 0 && Number.isFinite(item.imageAspect) ? item.imageAspect : 1;
+  if (!t || !(shape.w > 0.05) || !(shape.w <= 1)) return null;
+  // 贴图宽度记为 1，高度为 1/a；照片里横竖两个方向的厘米/像素一样，按平铺宽度换算
+  const cmPerUnit = t.flat / shape.w;
+  const height = (1 / a) * cmPerUnit;
+  const width = t.front / shape.w;
+  // 和按长度字段摆放的结果差得太远（量错了）时不用
+  const ref = placeByLabel(item, g);
+  const refLen = ref.height * (1 - hoodOf(item));
+  const len = height * ((shape.bottom ?? 1) - shape.top);
+  if (!(len > refLen * 0.45 && len < refLen * 2.4)) return null;
+  const y = t.anchorY - shape.top * height;
+  const x = -shape.cx * width;
+  const r: GarmentRect = { x, y, width, height, anchorX: 0, anchorY: t.anchorY };
+  const hood = hoodOf(item);
+  if (hood > 0) r.clipTop = y + hood * height;
+  return r;
+}
+
+function placeByLabel(item: PlaceableItem, g: MannequinGeometry): GarmentRect {
   const H = g.height;
   const shoulderW = g.shoulderHalf * 2;
   const hipW = g.hipHalf * 2;
@@ -483,7 +563,10 @@ export function applyPlacement(rect: GarmentRect, p?: Placement): GarmentRect {
   const w = rect.width * p.scale;
   const h = rect.height * p.scale;
   const out: GarmentRect = { x: cx - w / 2, y: cy - h / 2, width: w, height: h };
-  if (rect.clipTop !== undefined) out.clipTop = cy + (rect.clipTop - (rect.y + rect.height / 2)) * p.scale;
+  const map = (v: number, c0: number, c1: number) => c1 + (v - c0) * p.scale;
+  if (rect.clipTop !== undefined) out.clipTop = map(rect.clipTop, rect.y + rect.height / 2, cy);
+  if (rect.anchorX !== undefined) out.anchorX = map(rect.anchorX, rect.x + rect.width / 2, cx);
+  if (rect.anchorY !== undefined) out.anchorY = map(rect.anchorY, rect.y + rect.height / 2, cy);
   return out;
 }
 
@@ -517,7 +600,8 @@ export function garmentView(item: SideItem, g: MannequinGeometry, side: ViewSide
   if (side === 'front') {
     return { rect: applyPlacement(placeGarment(item, g), placement), image: item.images.cutout, mirrored: false, hasBack };
   }
-  const aspect = hasBack ? item.backAspect ?? item.imageAspect : item.imageAspect;
+  // 按身材摆放的衣服：背面用和正面一样的范围（背面照片拉伸进去），前后两片对得上
+  const aspect = hasBack && !item.shape ? item.backAspect ?? item.imageAspect : item.imageAspect;
   const r = applyPlacement(placeGarment({ ...item, imageAspect: aspect }, g), placement);
   return {
     rect: { ...r, x: -(r.x + r.width) },

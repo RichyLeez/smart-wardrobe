@@ -15,6 +15,7 @@ import { clearAll, requestPersistence, storageEstimate } from '../../storage/db'
 import { saveFile } from '../../storage/hosted';
 import { useStore } from '../store';
 import { useUI } from '../ui';
+import { MODEL_SIZE_MB, mattingAvailable, modelDownloaded, prepareMatting, removeMatting, useMatting } from '../matting';
 
 const GOALS: BodyGoal[] = ['lengthen_legs', 'balance_upper', 'balance_lower', 'define_waist'];
 const GENDER_LABELS: Record<Gender, string> = { female: '女', male: '男', unspecified: '不填' };
@@ -340,6 +341,8 @@ export function SettingsPage() {
             </Field>
           </section>
 
+          <ModelSection />
+
           <section className="section">
             <h2 className="section-title">推荐</h2>
             <div className="panel">
@@ -431,5 +434,59 @@ export function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** 识别模型：下载状态、删除 */
+function ModelSection() {
+  const ui = useUI();
+  const m = useMatting();
+  const [cached, setCached] = useState<boolean | null>(null);
+  const available = useMemo(() => mattingAvailable(), []);
+  useEffect(() => {
+    if (available) void modelDownloaded().then(setCached);
+  }, [available, m.status]);
+  if (!available) return null;
+  const busy = m.status === 'downloading' || m.status === 'preparing';
+  return (
+    <section className="section">
+      <h2 className="section-title">衣服识别模型</h2>
+      <div className="panel">
+        <p className="small muted" style={{ margin: 0 }}>
+          开源的 U²-Net 模型，在本机识别照片里的衣服，白床单上的白领口、白下摆也能保留下来。照片不上传，不收费。
+        </p>
+        <div className="kv">
+          <span>
+            {busy
+              ? m.status === 'downloading'
+                ? `正在下载 ${Math.round(m.progress * 100)}%`
+                : '正在准备…'
+              : cached
+                ? `已下载（约 ${MODEL_SIZE_MB}MB）`
+                : '未下载'}
+          </span>
+          {cached && !busy ? (
+            <button
+              type="button"
+              className="btn btn-small btn-ghost"
+              onClick={async () => {
+                await removeMatting();
+                setCached(false);
+                ui.toast('已删除识别模型，去背改为按颜色');
+              }}
+            >
+              删除
+            </button>
+          ) : (
+            !busy && (
+              <button type="button" className="btn btn-small" onClick={() => void prepareMatting(true)}>
+                下载（约 {MODEL_SIZE_MB}MB）
+              </button>
+            )
+          )}
+        </div>
+        {m.status === 'error' && <p className="small" style={{ margin: 0 }}>上次没成功：{m.error}</p>}
+      </div>
+    </section>
   );
 }

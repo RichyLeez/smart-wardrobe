@@ -8,6 +8,10 @@
 //   3. 每个像素按两种颜色模型的可能性打分，相邻像素颜色越接近越倾向于同一类，
 //      用最大流求出总代价最小的分割。重复 2、3 几次。
 //   4. 在缩小的图上计算，放大回原尺寸后，在边界附近逐像素按颜色模型重新判断，边缘更贴合。
+//   有抠图模型的结果（prior，每个像素是衣服的概率）时，只用它"补"：模型认为是衣服的地方，
+//   判成背景要多付代价，颜色分不开的地方（白床单上的白领口、白下摆）因此留下来；
+//   模型认为是背景的地方不额外扣分——模型在真实照片上偶尔会把一截袖子、或者杂乱背景里的
+//   整件衣服看漏，这时仍以颜色为准，不会被模型删掉。
 // 全部是纯函数，不依赖浏览器。
 
 import { featherMask, keepMainComponents, type RGBAImage } from './background';
@@ -26,6 +30,10 @@ export interface SmartCutOptions {
   feather?: number;
   /** 只保留面积不小于最大一块这个比例的前景块；一张照片拍好几件时调小，避免把袜子这类小件当碎块去掉 */
   minPieceRatio?: number;
+  /** 抠图模型给出的每个像素是衣服的概率（0~255，和图片同尺寸） */
+  prior?: Uint8Array;
+  /** 模型结果的权重（负对数概率乘以这个系数加进代价） */
+  priorWeight?: number;
 }
 
 export interface SmartCutResult {
@@ -198,12 +206,20 @@ interface Small {
   rgb: Float32Array;
   /** 0~1，衣物比例 */
   init: Float32Array;
+  /** 0~1，模型给出的衣服概率；没有模型时为 null */
+  prior: Float32Array | null;
   /** 0 未标记，1 背景，2 衣物 */
   strokes: Uint8Array;
   scale: number;
 }
 
-function downscale(img: RGBAImage, maxSide: number, init: Uint8Array | undefined, strokes: Uint8Array | undefined): Small {
+function downscale(
+  img: RGBAImage,
+  maxSide: number,
+  init: Uint8Array | undefined,
+  strokes: Uint8Array | undefined,
+  priorFull: Uint8Array | undefined,
+): Small {
   const { width: W, height: H, data } = img;
   const scale = Math.min(1, maxSide / Math.max(W, H));
   const w = Math.max(8, Math.round(W * scale));
@@ -214,6 +230,7 @@ function downscale(img: RGBAImage, maxSide: number, init: Uint8Array | undefined
   const cnt = new Float32Array(n);
   const s1 = new Float32Array(n);
   const s2 = new Float32Array(n);
+  const prior = priorFull ? new Float32Array(n) : null;
   for (let y = 0; y < H; y++) {
     const sy = Math.min(h - 1, Math.floor((y * h) / H));
     for (let x = 0; x < W; x++) {
@@ -225,6 +242,7 @@ function downscale(img: RGBAImage, maxSide: number, init: Uint8Array | undefined
       rgb[si * 3 + 2] += data[i * 4 + 2];
       cnt[si]++;
       if (init) fg[si] += init[i] / 255;
+      if (prior) prior[si] += priorFull![i] / 255;
       if (strokes) {
         if (strokes[i] === 1) s1[si]++;
         else if (strokes[i] === 2) s2[si]++;
@@ -238,15 +256,18 @@ function downscale(img: RGBAImage, maxSide: number, init: Uint8Array | undefined
     rgb[i * 3 + 1] /= c;
     rgb[i * 3 + 2] /= c;
     fg[i] = init ? fg[i] / c : NaN;
+    if (prior) prior[i] /= c;
     if (s2[i] > 0 && s2[i] >= s1[i]) st[i] = 2;
     else if (s1[i] > 0) st[i] = 1;
   }
-  return { w, h, rgb, init: fg, strokes: st, scale: w / W };
+  return { w, h, rgb, init: fg, prior, strokes: st, scale: w / W };
 }
 
 // ---------- 主流程 ----------
 
 const COST_SCALE = 64;
+/** 模型结果的默认权重（和颜色代价同一量纲：负对数可能性） */
+export const PRIOR_WEIGHT = 10;
 const HARD = 1e9;
 const GAMMA = 50;
 
@@ -387,8 +408,30 @@ function growFromStrokes(s: Small, value: 1 | 2): Uint8Array {
   return out;
 }
 
-function initialLabels(s: Small, hard: Uint8Array): Uint8Array {
-  const { w, h, init } = s;
+/** 从现有衣服出发，沿模型概率 > 0.8 的相邻像素扩展 */
+function growConfident(fg: Uint8Array, prior: Float32Array, w: number, h: number): void {
+  const n = w * h;
+  const stack = new Int32Array(n);
+  let top = 0;
+  for (let i = 0; i < n; i++) if (fg[i]) stack[top++] = i;
+  while (top > 0) {
+    const i = stack[--top];
+    const x = i % w;
+    const visit = (j: number) => {
+      if (!fg[j] && prior[j] > 0.8) {
+        fg[j] = 1;
+        stack[top++] = j;
+      }
+    };
+    if (x > 0) visit(i - 1);
+    if (x < w - 1) visit(i + 1);
+    if (i >= w) visit(i - w);
+    if (i < n - w) visit(i + w);
+  }
+}
+
+function initialLabels(s: Small, hard: Uint8Array, seedFromPrior: boolean): Uint8Array {
+  const { w, h, init, prior } = s;
   const n = w * h;
   const band = Math.max(1, Math.round(Math.min(w, h) * 0.012));
   const fg = new Uint8Array(n);
@@ -406,6 +449,10 @@ function initialLabels(s: Small, hard: Uint8Array): Uint8Array {
     const iy = Math.round(h * 0.1);
     for (let y = iy; y < h - iy; y++) for (let x = ix; x < w - ix; x++) fg[y * w + x] = 1;
   }
+  // 模型很确定是衣服、又和按颜色得到的衣服连在一起的部分，起点里也算衣服
+  // （白条纹延伸到侧缝、白下摆：按颜色去背时被当成背景，这样衣服的颜色模型里才有白色）。
+  // 权重被调低（模型对这张照片没把握）时不做
+  if (prior && seedFromPrior) growConfident(fg, prior, w, h);
   // 笔刷：擦除的那一块颜色整体先算背景，恢复的那一块整体先算衣物
   const erased = growFromStrokes(s, 1);
   const restored = growFromStrokes(s, 2);
@@ -436,8 +483,24 @@ function modelsFrom(s: Small, labels: Uint8Array): { fg: ColorModel; bg: ColorMo
   return { fg: fitColorModel(fgS, a), bg: fitColorModel(bgS, b) };
 }
 
-function cutOnce(s: Small, hard: Uint8Array, labels: Uint8Array, weights: { right: Float32Array; down: Float32Array }): Uint8Array {
-  const { w, h, rgb } = s;
+/**
+ * 模型给"判成背景"加的代价：概率超过一半才开始加，越确定加得越多（-ln(1-p) 减去 p = 0.5 时的值）。
+ * 判成衣服不额外加代价（见文件开头的说明）。
+ */
+function priorBgCost(p: number, weight: number): number {
+  if (p <= 0.5) return 0;
+  const q = Math.min(0.98, p);
+  return (-Math.log(1 - q) - Math.LN2) * weight;
+}
+
+function cutOnce(
+  s: Small,
+  hard: Uint8Array,
+  labels: Uint8Array,
+  weights: { right: Float32Array; down: Float32Array },
+  priorWeight: number,
+): Uint8Array {
+  const { w, h, rgb, prior } = s;
   const n = w * h;
   const { fg, bg } = modelsFrom(s, labels);
   const graph = new GridMaxflow(w, h);
@@ -450,7 +513,8 @@ function cutOnce(s: Small, hard: Uint8Array, labels: Uint8Array, weights: { righ
       const b = rgb[i * 3 + 2];
       // 选衣物要付出"不像衣物"的代价，所以连向背景端的容量是衣物代价
       const costFg = colorCost(fg, r, g, b);
-      const costBg = colorCost(bg, r, g, b);
+      let costBg = colorCost(bg, r, g, b);
+      if (prior) costBg += priorBgCost(prior[i], priorWeight);
       graph.setTerminal(i, Math.round(costBg * COST_SCALE), Math.round(costFg * COST_SCALE));
     }
   }
@@ -505,12 +569,14 @@ function fillSmallHoles(fg: Uint8Array, width: number, height: number, maxArea: 
 export function smartCut(img: RGBAImage, options: SmartCutOptions = {}): SmartCutResult {
   const { width: W, height: H, data } = img;
   const N = W * H;
-  const small = downscale(img, options.maxSide ?? 320, options.init, options.strokes);
+  const small = downscale(img, options.maxSide ?? 320, options.init, options.strokes, options.prior);
   const hard = hardLabels(small);
-  let labels = initialLabels(small, hard);
+  const priorWeight = options.priorWeight ?? PRIOR_WEIGHT;
+  let labels = initialLabels(small, hard, priorWeight >= PRIOR_WEIGHT * 0.5);
   const weights = smoothWeights(small);
   const iterations = Math.max(1, options.iterations ?? 3);
-  for (let it = 0; it < iterations; it++) labels = cutOnce(small, hard, labels, weights);
+  for (let it = 0; it < iterations; it++) labels = cutOnce(small, hard, labels, weights, priorWeight);
+  const prior = options.prior;
 
   // 放大回原尺寸：远离边界的像素直接沿用，边界附近按颜色模型逐像素判断
   const { fg: fgModel, bg: bgModel } = modelsFrom(small, labels);
@@ -536,7 +602,8 @@ export function smartCut(img: RGBAImage, options: SmartCutOptions = {}): SmartCu
         const r = data[i * 4];
         const g = data[i * 4 + 1];
         const b = data[i * 4 + 2];
-        const margin = colorCost(bgModel, r, g, b) - colorCost(fgModel, r, g, b);
+        let margin = colorCost(bgModel, r, g, b) - colorCost(fgModel, r, g, b);
+        if (prior) margin += priorBgCost(prior[i] / 255, priorWeight);
         fg[i] = margin + 6 * (p - 0.5) > 0 ? 1 : 0;
       }
     }

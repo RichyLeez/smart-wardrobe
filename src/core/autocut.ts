@@ -135,14 +135,20 @@ export interface AutoCutResult {
 }
 
 /** 整张照片自动去背；multi 为真时拆成好几件 */
-export function autoCut(img: RGBAImage, options: { mode?: CutMode; multi?: boolean; lab?: Float32Array } = {}): AutoCutResult {
+export function autoCut(
+  img: RGBAImage,
+  options: { mode?: CutMode; multi?: boolean; lab?: Float32Array; prior?: Uint8Array; priorWeight?: number } = {},
+): AutoCutResult {
   const { width: w, height: h } = img;
   const lab = options.lab ?? toLabBuffer(img);
   const bg = estimateBackground(img, lab);
   const threshold = suggestThreshold(bg);
   const minPieceRatio = options.multi ? 0.002 : 0.03;
   const color = removeBackground(img, { threshold, minPieceRatio }, lab);
-  const raw = options.mode === 'color' ? color.alpha : smartCut(img, { init: color.alpha, minPieceRatio }).alpha;
+  const raw =
+    options.mode === 'color'
+      ? color.alpha
+      : smartCut(img, { init: color.alpha, minPieceRatio, prior: options.prior, priorWeight: options.priorWeight }).alpha;
   const parts = options.multi ? splitPieces(raw, w, h).map((p) => p.alpha) : [raw];
   const pieces = parts.map((a) => {
     const c = cleanupCut(a, img, { hanger: !options.multi });

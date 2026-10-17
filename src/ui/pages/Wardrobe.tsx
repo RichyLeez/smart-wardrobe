@@ -24,7 +24,9 @@ export function WardrobePage() {
   const stats = useMemo(() => wearStats(records), [records]);
 
   const active = items.filter((i) => i.status === 'active');
-  const pending = items.filter((i) => i.status === 'pending').length;
+  // 以前批量录入、还没确认的单品（批量录入暂时停用，逐件打开确认）
+  const pendingItems = items.filter((i) => i.status === 'pending');
+  const pending = pendingItems.length;
   const counts = useMemo(() => {
     const c = new Map<Filter, number>();
     for (const i of items) {
@@ -99,10 +101,6 @@ export function WardrobePage() {
       <header className="topbar">
         <h1>衣橱</h1>
         <div className="topbar-actions">
-          <button type="button" className="btn btn-small" onClick={() => ui.open({ kind: 'batch' })}>
-            <Icon name="layers" />
-            批量录入
-          </button>
           <button type="button" className="btn btn-primary btn-small" onClick={() => ui.open({ kind: 'item', id: null })}>
             <Icon name="plus" />
             录入单品
@@ -111,12 +109,12 @@ export function WardrobePage() {
       </header>
       <div className="page">
         {pending > 0 && (
-          <button type="button" className="callout" style={{ marginBottom: 12 }} onClick={() => ui.open({ kind: 'review' })}>
+          <button type="button" className="callout" style={{ marginBottom: 12 }} onClick={() => ui.open({ kind: 'item', id: pendingItems[0].id })}>
             <Icon name="layers" />
             <span>
-              <strong>{pending} 件待整理</strong>
+              <strong>{pending} 件还没确认</strong>
               <br />
-              批量录入的单品，类别是按轮廓猜的，确认一下才会参与推荐。
+              以前批量录入的单品，打开看一下类别、点「确认」才会参与推荐。
             </span>
           </button>
         )}
@@ -153,15 +151,11 @@ export function WardrobePage() {
         {ready && items.length === 0 && (
           <div className="empty">
             <h2>衣橱还是空的</h2>
-            <p>拍一张平铺的衣服照片开始录入。深色衣物用浅色背景拍，浅色衣物用深色背景拍，去背效果最好。衣服多的话用「批量录入」，一次选很多张照片。</p>
+            <p>拍一张平铺的衣服照片开始录入。深色衣物用浅色背景拍，浅色衣物用深色背景拍，去背效果最好。</p>
             <div className="row" style={{ justifyContent: 'center' }}>
               <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
                 <Icon name="camera" />
                 录入单品
-              </button>
-              <button type="button" className="btn" onClick={() => ui.open({ kind: 'batch' })}>
-                <Icon name="layers" />
-                批量录入
               </button>
             </div>
           </div>

@@ -1,4 +1,4 @@
-// 端到端测试：拍照更省事——横着拍自动转正、连帽上衣试穿时把帽子放下、
+// 端到端测试：拍照更省事——横着拍自动转正、按轮廓先选好类别、连帽上衣试穿时把帽子放下、
 // 衣服碰到照片边缘时提示（网站版，本机存储）。
 // 运行：npm run build && node --import tsx scripts/e2e-capture.ts [截图目录]
 
@@ -185,9 +185,10 @@ try {
   for (let i = 0; i < 3; i++) await page.getByRole('button', { name: '转 90°' }).first().click();
   await page.waitForTimeout(300);
   check(Math.abs((await previewAspect(page)) - upright) < 0.02, '转四次回到原样');
-  check((await hoodSwitch().count()) === 0, '还没选类别时不问帽子');
+  check(await page.getByText('按衣服轮廓猜的，不对就点一下改').isVisible(), '类别按轮廓先选好了');
   await editor().getByRole('button', { name: '上衣', exact: true }).click();
   await editor().getByRole('button', { name: '卫衣', exact: true }).click();
+  check(!(await page.getByText('按衣服轮廓猜的，不对就点一下改').isVisible()), '改过以后不再提示是猜的');
   check(await hoodSwitch().locator('input').isChecked(), '认出帽子，默认试穿时放下');
   await page.screenshot({ path: `${SHOTS}/capture-02-info.png` });
   await page.locator('.topbar').getByRole('button', { name: '保存' }).click();
@@ -280,24 +281,9 @@ try {
   await page.getByRole('button', { name: '下一步' }).click();
   await page.locator('#item-name').waitFor();
   check(!(await page.getByText('已经把照片转正了').isVisible()), '正着拍的不转');
-  await editor().getByRole('button', { name: '上衣', exact: true }).click();
+  check((await editor().getByRole('button', { name: 'T恤', exact: true }).getAttribute('aria-pressed')) === 'true', '按轮廓猜成 T 恤');
   check((await hoodSwitch().count()) === 0, '没有帽子不问');
   await page.getByRole('button', { name: '关闭' }).click();
-
-  console.log('批量录入：');
-  await page.getByRole('button', { name: '批量录入' }).click();
-  await page.getByRole('dialog', { name: '批量录入' }).waitFor();
-  await page.getByTestId('batch-input').setInputFiles([
-    { name: 'parka.jpg', mimeType: 'image/jpeg', buffer: photos.parka },
-    { name: 'cutoff.jpg', mimeType: 'image/jpeg', buffer: photos.cutoff },
-  ]);
-  await page.getByText('全部处理完了').waitFor({ timeout: 60000 });
-  items = await storedItems(page);
-  const [p1, p2] = items.filter((i) => i.status === 'pending');
-  check((p1.hoodTop ?? 0) > 0.15, `批量录入同样量出帽子（${(p1.hoodTop ?? 0).toFixed(2)}）`);
-  check(p1.category === 'top' || p1.category === 'outer', `不看帽子，猜成${p1.category === 'top' ? '上衣' : '外套'}`);
-  check(/碰到了照片的左边/.test(p2.reviewNote ?? ''), `下摆出画的那张提示碰到边缘：${p2.reviewNote}`);
-  await page.screenshot({ path: `${SHOTS}/capture-05-batch.png` });
 
   await ctx.close();
   check(errors.length === 0, `没有页面错误${errors.length ? '：\n' + errors.join('\n') : ''}`);

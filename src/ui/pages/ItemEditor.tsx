@@ -1,7 +1,7 @@
 // 录入与编辑单品：拍照 → 本地去背（可手动擦除/恢复）→ 自动取色 → 点选字段。
 // 正面必拍，背面可选：背面照片走同样的去背流程，用于人台背面和 3D 展示。
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   alphaBBox,
   applyMaskAndCrop,
@@ -39,13 +39,14 @@ import { frameContact, frameContactText } from '../../core/frame';
 import { removeMasked } from '../../core/hanger';
 import { alphaOf, rotateImage, uprightPiece } from '../../core/orient';
 import { hoodTop } from '../../core/hood';
+import { guessCategory } from '../../core/guess';
+import { measureShape } from '../../core/measure';
+import { PRIOR_WEIGHT } from '../../core/smartcut';
 import { smartCut } from '../../core/smartcut';
 import { colorPlus } from '../../core/pending';
 import { defaultOpenable } from '../../core/styling';
 import { analyzeSizeFit } from '../../core/sizefit';
 import { wearStats } from '../../core/stats';
-import { hasUsefulInfo, parseTagText, type TagParse } from '../../core/tag';
-import { isHosted } from '../../storage/hosted';
 import type { Category, ColorInfo, Fit, Item, Length, Occasion, Pattern, Rise, Season, Style, Warmth } from '../../core/types';
 import { ChipMulti, ChipSelect, Field, Segmented, Switch } from '../components/Controls';
 import { Icon } from '../components/Icon';
@@ -58,9 +59,10 @@ import {
   scaleCanvas,
   transparentBlob,
 } from '../imageTools';
-import { OCR_STAGE_TEXT, recognizeTagImage } from '../ocr';
-import { newId, useImageUrl, useStore, type NewImage } from '../store';
-import { useUI, type Overlay } from '../ui';
+import { MODEL_SIZE_MB, mattingAvailable, mattingEnabled, prepareMatting, runMatting, useMatting } from '../matting';
+import { newId, setPreviewImage, useImageUrl, useStore, type NewImage } from '../store';
+import { Mannequin } from '../components/Mannequin';
+import { useUI } from '../ui';
 import * as db from '../../storage/db';
 
 type Step = 'photo' | 'cutout' | 'info';
@@ -82,6 +84,11 @@ interface Work {
   auto: Uint8Array;
   /** 手动笔刷：1 擦除，2 恢复 */
   override: Uint8Array;
+  /** 抠图模型的结果（每个像素是衣服的概率）和它在去背里的权重；没用模型时为空 */
+  prior?: Uint8Array;
+  priorWeight?: number;
+  /** 模型这次的情况：用上了 / 照片太杂没把握 */
+  model?: 'used' | 'unsure';
 }
 
 function hasStrokes(o: Uint8Array): boolean {
@@ -104,12 +111,26 @@ interface Composed {
   aspect: number;
   /** 连帽上衣：帽子占贴图高度的比例 */
   hood: number;
+  /** 不透明度（量衣身宽度用） */
+  alpha: Uint8Array;
+  w: number;
+  h: number;
 }
 
 function compose(p: Prepared): Composed {
   const img = p.turns ? rotateImage(p.base, p.turns * 90) : p.base;
-  return { cutout: scaleCanvas(rgbaToCanvas(img), 640), aspect: img.width / img.height, hood: hoodTop(alphaOf(img), img.width, img.height) };
+  const alpha = alphaOf(img);
+  return {
+    cutout: scaleCanvas(rgbaToCanvas(img), 640),
+    aspect: img.width / img.height,
+    hood: hoodTop(alpha, img.width, img.height),
+    alpha,
+    w: img.width,
+    h: img.height,
+  };
 }
+
+let previewSeq = 0;
 
 interface Draft {
   name: string;
@@ -143,12 +164,10 @@ interface Draft {
   photoOpen: boolean;
   /** 试穿时不放下帽子 */
   hoodUp: boolean;
-}
-
-interface TagState {
-  parse: TagParse;
-  source: 'ocr' | 'paste';
-  text: string;
+  /** 人台上的大小（1 为默认） */
+  sizeAdjust: number;
+  /** 类别是按轮廓猜的（用户还没改过） */
+  categoryGuessed: boolean;
 }
 
 function draftFromItem(i: Item): Draft {
@@ -180,6 +199,8 @@ function draftFromItem(i: Item): Draft {
     openable: i.openable,
     photoOpen: !!i.photoOpen,
     hoodUp: !!i.hoodUp,
+    sizeAdjust: i.sizeAdjust ?? 1,
+    categoryGuessed: false,
   };
 }
 
@@ -202,6 +223,8 @@ const EMPTY_DRAFT: Draft = {
   favorite: false,
   photoOpen: false,
   hoodUp: false,
+  sizeAdjust: 1,
+  categoryGuessed: false,
 };
 
 /** 选定子类时套用常用默认值（保暖度、季节、场合、风格、版型、长度、腰线） */
@@ -233,13 +256,7 @@ function withSubtype(d: Draft, category: Category, subtype: string | undefined):
   };
 }
 
-const TAG_SOURCE_TEXT: Record<NonNullable<TagParse['subtypeSource']>, string> = {
-  name: '来自品名',
-  standard: '来自执行标准',
-  keyword: '来自吊牌文字',
-};
-
-export function ItemEditor({ id, back }: { id: string | null; back?: 'review' }) {
+export function ItemEditor({ id }: { id: string | null }) {
   const store = useStore();
   const ui = useUI();
   const existing = id ? store.items.find((i) => i.id === id) ?? null : null;
@@ -264,15 +281,8 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
   const [draft, setDraft] = useState<Draft>(existing ? draftFromItem(existing) : EMPTY_DRAFT);
   const [showPalette, setShowPalette] = useState(false);
   const [showMore, setShowMore] = useState(false);
-  const [tagState, setTagState] = useState<TagState | null>(null);
-  const [tagApplied, setTagApplied] = useState<string[] | null>(null);
-  const [ocrStatus, setOcrStatus] = useState<string | null>(null);
-  const [showPaste, setShowPaste] = useState(false);
-  const [pasteText, setPasteText] = useState(existing?.tagInfo?.raw ?? '');
-  const tagCameraRef = useRef<HTMLInputElement>(null);
-  const tagAlbumRef = useRef<HTMLInputElement>(null);
-  // claude.ai 发布页面里不能联网下载识别组件，只提供粘贴文字
-  const canOcr = !isHosted();
+  const matting = useMatting();
+  const canMatting = useMemo(() => mattingAvailable(), []);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const albumRef = useRef<HTMLInputElement>(null);
@@ -282,16 +292,35 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
   /** 帽子占贴图高度的比例：换了照片按新贴图量，否则用存着的 */
   const hoodMeasured = composed ? composed.hood : existing?.hoodTop;
   const hoodFrac = hoodMeasured ?? 0;
+  /** 基准宽度（衣身 / 腰头）：换了照片或改了类别时重新量 */
+  const shape = useMemo(() => {
+    const c = draft.category;
+    if (!c) return undefined;
+    if (composed) return measureShape(composed.alpha, composed.w, composed.h, c, composed.hood) ?? undefined;
+    return existing && existing.category === c ? existing.shape : undefined;
+  }, [composed, draft.category, existing]);
   const composedBack = useMemo(() => (preparedBack ? compose(preparedBack) : null), [preparedBack]);
   const preview = useMemo(() => (composed ? composed.cutout.toDataURL() : null), [composed]);
+  // 人台预览用的临时图片 id（每换一次图换一个，人台会重新读取）
+  const previewId = useMemo(() => {
+    if (!preview) return null;
+    const pid = `preview:${++previewSeq}`;
+    setPreviewImage(pid, preview);
+    return pid;
+  }, [preview]);
   const backPreview = useMemo(() => (composedBack ? composedBack.cutout.toDataURL() : null), [composedBack]);
   const hasExistingBack = !!existing?.images.backCutout && !removeBack;
   const stats = existing ? wearStats(store.records).get(existing.id) : undefined;
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
-  /** 从待整理进来的，关掉后回到待整理 */
-  const closeEditor = () => (back ? ui.open({ kind: back } as Overlay) : ui.close());
+  const closeEditor = () => ui.close();
+  /** 以前批量录入、还没确认的单品 */
   const isPending = existing?.status === 'pending';
+
+  // 用过一次识别模型后，打开录入页就在后台准备好（从本机缓存读取）
+  useEffect(() => {
+    if (canMatting && mattingEnabled()) void prepareMatting();
+  }, [canMatting]);
 
   // ---------- 照片与去背 ----------
 
@@ -307,7 +336,28 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
       const bg = estimateBackground(photo.rgba, lab);
       const t = suggestThreshold(bg);
       const res = removeBackground(photo.rgba, { threshold: t }, lab);
-      const smart = mode === 'smart' ? smartCut(photo.rgba, { init: res.alpha }) : null;
+      // 识别模型：只在智能方式下用；没准备好时照常按颜色和图割去背
+      let prior: Uint8Array | undefined;
+      let priorWeight: number | undefined;
+      let modelUse: Work['model'];
+      if (mode === 'smart') {
+        if (matting.status === 'downloading' || matting.status === 'preparing') {
+          setBusy('正在准备识别模型…');
+          await prepareMatting();
+        }
+        setBusy('正在识别衣服…');
+        await new Promise((r) => setTimeout(r, 30));
+        const m = await runMatting(photo.rgba);
+        if (m) {
+          // 模型对这张照片没把握（杂物多）时权重降到 0，只按颜色去背
+          priorWeight = PRIOR_WEIGHT * m.confidence;
+          prior = m.prior;
+          modelUse = m.confidence >= 0.3 ? 'used' : 'unsure';
+        }
+        setBusy('正在智能去背…');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const smart = mode === 'smart' ? smartCut(photo.rgba, { init: res.alpha, prior, priorWeight }) : null;
       setThreshold(t);
       setWork({
         rgba: photo.rgba,
@@ -318,6 +368,9 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
         colorThreshold: t,
         auto: smart ? smart.alpha : res.alpha,
         override: new Uint8Array(photo.rgba.width * photo.rgba.height),
+        prior,
+        priorWeight,
+        model: modelUse,
       });
       setNoRemoval((smart ?? res).coverage > 0.97);
       setKeepHanger(false);
@@ -333,7 +386,7 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
     }
   }
 
-  /** 用存档的原图重新去背（批量录入后去背不准时，不用重拍） */
+  /** 用存档的原图重新去背（去背不准、或者想用识别模型再去一次时，不用重拍） */
   async function recutFromOriginal() {
     const id = existing?.images.original;
     if (!id) return;
@@ -371,7 +424,12 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
     setBusy('正在智能去背…');
     await new Promise((r) => setTimeout(r, 30));
     try {
-      const r = smartCut(w.rgba, { init: w.colorAuto, strokes: hasStrokes(w.override) ? w.override : undefined });
+      const r = smartCut(w.rgba, {
+        init: w.colorAuto,
+        strokes: hasStrokes(w.override) ? w.override : undefined,
+        prior: w.prior,
+        priorWeight: w.priorWeight,
+      });
       setWork({ ...w, auto: r.alpha });
     } finally {
       setBusy(null);
@@ -468,11 +526,23 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
       }
       const colors = suggestColors(extractColors(cropped.data, 4));
       setPrepared({ base: up.image, turns: 0, archive: work.archive, colors });
+      // 按轮廓猜类别（不看摊开的帽子）：只在还没选类别时填上，用户可以改
+      let guess = null;
+      if (!noRemoval) {
+        const a = alphaOf(up.image);
+        const hood = hoodTop(a, up.image.width, up.image.height);
+        if (hood > 0) a.fill(0, 0, Math.round(up.image.height * hood) * up.image.width);
+        guess = guessCategory(a, up.image.width, up.image.height, colors?.primary.hex);
+      }
       setDraft((d) => {
-        if (!colors) return d;
+        let next = d;
+        if (guess && !d.category) {
+          next = { ...withSubtype(d, guess.category, guess.subtype || undefined), categoryGuessed: true };
+        }
+        if (!colors) return next;
         const color = { hex: colors.primary.hex, name: colors.primary.name };
         const color2 = colors.multiColor && colors.secondary ? { ...colors.secondary } : undefined;
-        return { ...d, color, color2, name: d.nameTouched ? d.name : autoName(color.name, d.subtype) };
+        return { ...next, color, color2, name: d.nameTouched ? d.name : autoName(color.name, next.subtype) };
       });
       if (up.angle && Math.abs(up.angle) >= 45) ui.toast('已经把照片转正了，方向不对可以点「转 90°」');
       setStep('info');
@@ -494,6 +564,7 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
       ...d,
       category: c,
       subtype: null,
+      categoryGuessed: false,
       fit: FIELD_APPLICABILITY[c].fit ? d.fit : undefined,
       length: FIELD_APPLICABILITY[c].length ? d.length : undefined,
       rise: FIELD_APPLICABILITY[c].rise ? d.rise : undefined,
@@ -505,107 +576,15 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
     const cat = draft.category;
     setDraft((d) => {
       const next = withSubtype(d, cat, s);
-      return { ...next, name: d.nameTouched ? d.name : autoName(d.color?.name, s) };
+      return { ...next, categoryGuessed: false, name: d.nameTouched ? d.name : autoName(d.color?.name, s) };
     });
   }
 
-  // ---------- 吊牌识别 ----------
+  // ---------- 版型 ----------
 
   function baseFitOf(d: Draft): Fit | undefined {
     if (d.tagFit) return d.tagFit;
     return d.category && d.subtype ? defaultsFor(d.category, d.subtype)?.fit : undefined;
-  }
-
-  function handleTagText(text: string, source: 'ocr' | 'paste') {
-    setPasteText(text);
-    const parse = parseTagText(text);
-    setTagApplied(null);
-    if (!hasUsefulInfo(parse)) {
-      setTagState(null);
-      setShowPaste(true);
-      ui.toast(source === 'ocr' ? '没有从照片里认出吊牌信息，可以拍近一点、拍正一点再试，或者粘贴文字' : '没有认出品牌、号型、成分这类信息');
-      return;
-    }
-    setTagState({ parse, source, text });
-  }
-
-  async function onTagFile(file: File | undefined) {
-    if (!file) return;
-    setOcrStatus(OCR_STAGE_TEXT.download);
-    try {
-      const text = await recognizeTagImage(file, (stage, pct) =>
-        setOcrStatus(stage === 'recognize' ? `${OCR_STAGE_TEXT.recognize} ${pct}%` : OCR_STAGE_TEXT[stage]),
-      );
-      handleTagText(text, 'ocr');
-    } catch (e) {
-      ui.toast(e instanceof Error ? e.message : '识别失败，可以改用粘贴文字');
-      setShowPaste(true);
-    } finally {
-      setOcrStatus(null);
-      if (tagCameraRef.current) tagCameraRef.current.value = '';
-      if (tagAlbumRef.current) tagAlbumRef.current.value = '';
-    }
-  }
-
-  function applyTag() {
-    if (!tagState) return;
-    const { parse: p, source, text } = tagState;
-    let next: Draft = { ...draft };
-    const applied: string[] = [];
-    if (p.brand) {
-      next.brand = p.brand;
-      applied.push('品牌');
-    }
-    if (p.styleNo) {
-      next.styleNo = p.styleNo;
-      applied.push('货号');
-    }
-    const sizeText = [p.size && p.size !== p.sizeCode ? p.size : '', p.sizeCode ?? ''].filter(Boolean).join(' ');
-    if (sizeText) {
-      next.size = sizeText;
-      applied.push(p.sizeCode ? '号型' : '尺码');
-    }
-    if (p.materialText) {
-      next.material = p.materialText;
-      applied.push('成分');
-    }
-    if (p.category && (!next.category || (next.category === p.category && !next.subtype))) {
-      next = withSubtype(next, p.category, p.subtype);
-      applied.push('类别');
-    }
-    next.tagRaw = text;
-    next.tagSource = source;
-    next.tagStandard = p.standards.find((s) => s.category || s.label)?.code ?? p.standards[0]?.code;
-    next.tagFit = p.fit;
-    const cat = next.category;
-    if (cat) {
-      const app = FIELD_APPLICABILITY[cat];
-      if (app.length && p.length) {
-        next.length = p.length;
-        applied.push('长度');
-      }
-      if (app.rise && p.rise) {
-        next.rise = p.rise;
-        applied.push('腰线');
-      }
-      if (app.fit) {
-        const r = analyzeSizeFit({ category: cat, subtype: next.subtype ?? undefined, fit: baseFitOf(next), size: next.size }, store.settings.body);
-        const fit = r?.effectiveFit ?? p.fit;
-        if (fit) {
-          next.fit = fit;
-          applied.push(r?.effectiveFit && r.effectiveFit !== p.fit ? '版型（按你的身材换算）' : '版型');
-        }
-      }
-    }
-    if (p.warmthHint) {
-      next.warmth = p.warmthHint;
-      applied.push('保暖度');
-    }
-    next.name = draft.nameTouched ? draft.name : autoName(next.color?.name, next.subtype);
-    setDraft(next);
-    setTagApplied(applied);
-    setTagState(null);
-    setShowPaste(false);
   }
 
   async function save() {
@@ -684,6 +663,8 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
         // 换了照片按这次的贴图量帽子；没换照片时沿用原来的（旧单品在打开时补量）
         hoodTop: hoodMeasured !== undefined ? Math.round(hoodMeasured * 1000) / 1000 : undefined,
         hoodUp: hoodFrac > 0 && draft.hoodUp ? true : undefined,
+        shape,
+        sizeAdjust: Math.abs(draft.sizeAdjust - 1) > 0.001 ? draft.sizeAdjust : undefined,
         // 待整理的单品保存即确认
         status: existing && existing.status !== 'pending' ? existing.status : 'active',
         images: imageRefs!,
@@ -825,7 +806,7 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                 <li>光线均匀，避免强烈阴影和反光。</li>
                 <li>上衣和外套尽量把袖子摆开，换装时更像穿在身上。连帽的衣服把帽子摊在领口上方，试穿时会自动放下。</li>
                 <li>挂在衣架上拍也可以，挂钩和横杆会自动去掉。</li>
-                <li>白色或带白边、白字的衣服，用深色床单或地板当背景。</li>
+                <li>白色或带白边、白字的衣服，用深色床单或地板当背景；用了识别模型后白底也能拍，但深色背景仍然更准。</li>
                 <li>外套拉好拉链拍，搭配时可以选择敞开或合上；没拉拉链拍的，录入时打开「照片里是敞开的」。</li>
               </ul>
               )}
@@ -837,12 +818,8 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                 <button type="button" className="btn btn-ghost" onClick={() => setStep('info')}>
                   不换照片，返回
                 </button>
-              ) : (
-                <button type="button" className="btn btn-ghost" onClick={() => ui.open({ kind: 'batch' })}>
-                  <Icon name="layers" />
-                  衣服多？一次录好几件
-                </button>
-              )}
+              ) : null}
+              {side === 'front' && canMatting && <ModelCard />}
             </div>
           )}
 
@@ -868,6 +845,13 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                 />
                 {busy && <div className="busy">{busy}</div>}
               </div>
+              {!noRemoval && mode === 'smart' && work.model && (
+                <p className="small muted" role="status" style={{ margin: 0 }}>
+                  {work.model === 'used'
+                    ? '已用识别模型找出衣服，和背景颜色接近的边（白领口、白下摆）也会保留。'
+                    : '照片里东西比较多，识别模型没认准，这次按颜色去背。把旁边的杂物挪开再拍会更准。'}
+                </p>
+              )}
               <Switch label="不去背，保留原图" checked={noRemoval} onChange={setNoRemoval} hint="背景太杂时可以先保留原图，换装时会显示为矩形照片" />
               {!noRemoval && edgeContact && edgeContact.sides.length > 0 && (
                 <div className="warnbox" role="status">
@@ -1088,153 +1072,12 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                 </div>
               </section>
 
-              <section className="tag-card" aria-label="吊牌信息">
+              <section className="tag-card" aria-label="品牌和尺码">
                 <div className="tag-card-head">
                   <Icon name="tag" />
-                  <strong>吊牌信息</strong>
-                  <span className="field-hint">可选，比照片估计更准</span>
+                  <strong>品牌和尺码</strong>
+                  <span className="field-hint">可选，照着吊牌填</span>
                 </div>
-                <p className="small muted">
-                  拍吊牌或洗标，自动读出品牌、货号、号型、成分和版型字样{store.settings.body ? '，并和你的身材对比' : ''}。
-                </p>
-                <div className="row row-wrap">
-                  {canOcr && (
-                    <>
-                      <button type="button" className="btn btn-small" disabled={!!ocrStatus} onClick={() => tagCameraRef.current?.click()}>
-                        <Icon name="camera" />
-                        拍吊牌
-                      </button>
-                      <button type="button" className="btn btn-small" disabled={!!ocrStatus} onClick={() => tagAlbumRef.current?.click()}>
-                        <Icon name="image" />
-                        相册里的吊牌
-                      </button>
-                    </>
-                  )}
-                  <button type="button" className="btn btn-small" aria-expanded={showPaste} onClick={() => setShowPaste((v) => !v)}>
-                    {showPaste ? '收起文字' : pasteText ? '查看识别的文字' : '粘贴文字'}
-                  </button>
-                </div>
-                <input ref={tagCameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e: React.ChangeEvent<HTMLInputElement>) => onTagFile(e.target.files?.[0])} />
-                <input ref={tagAlbumRef} type="file" accept="image/*" hidden data-testid="tag-input" onChange={(e: React.ChangeEvent<HTMLInputElement>) => onTagFile(e.target.files?.[0])} />
-                {ocrStatus && (
-                  <p className="small tag-progress" role="status">
-                    {ocrStatus}
-                  </p>
-                )}
-                {showPaste && (
-                  <div className="tag-paste">
-                    <textarea
-                      id="tag-text"
-                      className="input"
-                      rows={5}
-                      value={pasteText}
-                      placeholder={'例如：\n品牌：优衣库\n号型：170/92A\n面料：棉 100%'}
-                      onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPasteText(e.target.value)}
-                      aria-label="吊牌文字"
-                    />
-                    <span className="field-hint">
-                      iPhone：用相机对准吊牌，点右下角的文字图标，选「拷贝全部」，再粘贴到这里。识别有错字可以直接改。
-                    </span>
-                    <button type="button" className="btn btn-small" disabled={!pasteText.trim()} onClick={() => handleTagText(pasteText, tagState?.source === 'ocr' ? 'ocr' : 'paste')}>
-                      读取这段文字
-                    </button>
-                  </div>
-                )}
-                {tagState && (
-                  <div className="tag-result" aria-label="识别结果">
-                    <dl>
-                      {tagState.parse.brand && (
-                        <>
-                          <dt>品牌</dt>
-                          <dd>{tagState.parse.brand}</dd>
-                        </>
-                      )}
-                      {tagState.parse.styleNo && (
-                        <>
-                          <dt>货号</dt>
-                          <dd>{tagState.parse.styleNo}</dd>
-                        </>
-                      )}
-                      {(tagState.parse.size || tagState.parse.sizeCode) && (
-                        <>
-                          <dt>{tagState.parse.sizeCode ? '号型' : '尺码'}</dt>
-                          <dd>
-                            {[tagState.parse.size !== tagState.parse.sizeCode ? tagState.parse.size : '', tagState.parse.sizeCode].filter(Boolean).join(' ')}
-                          </dd>
-                        </>
-                      )}
-                      {tagState.parse.materialText && (
-                        <>
-                          <dt>成分</dt>
-                          <dd>
-                            {tagState.parse.materialText}
-                            {tagState.parse.stretch ? '（有弹性）' : ''}
-                          </dd>
-                        </>
-                      )}
-                      {tagState.parse.subtype && tagState.parse.category && (
-                        <>
-                          <dt>款式</dt>
-                          <dd>
-                            {tagState.parse.subtype}（{CATEGORY_LABELS[tagState.parse.category]}，{TAG_SOURCE_TEXT[tagState.parse.subtypeSource ?? 'keyword']}）
-                            {cat && cat !== tagState.parse.category && (
-                              <span className="tag-conflict">和你选的「{CATEGORY_LABELS[cat]}」不一样，填入时不会改动类别</span>
-                            )}
-                          </dd>
-                        </>
-                      )}
-                      {tagState.parse.fit && (
-                        <>
-                          <dt>版型</dt>
-                          <dd>
-                            {FIT_LABELS[tagState.parse.fit]}（吊牌写着「{tagState.parse.fitWord}」）
-                          </dd>
-                        </>
-                      )}
-                      {tagState.parse.length && (
-                        <>
-                          <dt>长度</dt>
-                          <dd>吊牌写着「{tagState.parse.lengthWord}」</dd>
-                        </>
-                      )}
-                      {tagState.parse.rise && (
-                        <>
-                          <dt>腰线</dt>
-                          <dd>{RISE_LABELS[tagState.parse.rise]}</dd>
-                        </>
-                      )}
-                      {tagState.parse.warmthHint && (
-                        <>
-                          <dt>保暖度</dt>
-                          <dd>
-                            {WARMTH_LABELS[tagState.parse.warmthHint]}（{tagState.parse.warmthReason}）
-                          </dd>
-                        </>
-                      )}
-                      {tagState.parse.standards.filter((x) => x.label).map((x) => (
-                        <Fragment key={x.code}>
-                          <dt>执行标准</dt>
-                          <dd>
-                            {x.code}（{x.label}）
-                          </dd>
-                        </Fragment>
-                      ))}
-                    </dl>
-                    <div className="row">
-                      <button type="button" className="btn btn-primary btn-small grow" onClick={applyTag}>
-                        填入这些信息
-                      </button>
-                      <button type="button" className="btn btn-small btn-ghost" onClick={() => setTagState(null)}>
-                        不用了
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {tagApplied && tagApplied.length > 0 && (
-                  <p className="small tag-applied" role="status">
-                    已从吊牌填入：{tagApplied.join('、')}。可以在下面继续修改。
-                  </p>
-                )}
                 <div className="tag-fields">
                   <label>
                     品牌
@@ -1255,11 +1098,14 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                 </div>
               </section>
 
-              <Field label="类别">
+              <Field label="类别" hint={draft.categoryGuessed ? '按衣服轮廓猜的，不对就点一下改' : undefined}>
                 <ChipSelect<Category> options={CATEGORIES} value={cat} labels={CATEGORY_LABELS} onChange={chooseCategory} allowEmpty={false} />
               </Field>
               {cat && (
-                <Field label="子类" hint={draft.subtype ? '已按子类填好常用选项，可以修改' : undefined}>
+                <Field
+                  label="子类"
+                  hint={draft.subtype ? (draft.categoryGuessed ? '按轮廓猜的，已按它填好常用选项，可以修改' : '已按子类填好常用选项，可以修改') : undefined}
+                >
                   <ChipSelect<string>
                     options={subtypesOf(cat)}
                     value={draft.subtype}
@@ -1394,6 +1240,28 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
                   <Segmented<Rise> options={['high', 'mid', 'low']} value={draft.rise} labels={RISE_LABELS} onChange={(v) => set({ rise: v })} />
                 </Field>
               )}
+              {cat && draft.color && (previewId || existing) && (
+                <SizePreview
+                  item={{
+                    ...(existing ?? EMPTY_ITEM),
+                    category: cat,
+                    subtype: draft.subtype ?? '',
+                    color: draft.color,
+                    fit: app?.fit ? draft.fit : undefined,
+                    length: app?.length ? draft.length : undefined,
+                    rise: app?.rise ? draft.rise : undefined,
+                    images: previewId ? { cutout: previewId, thumb: previewId } : existing!.images,
+                    imageAspect: composed ? composed.aspect : existing!.imageAspect,
+                    hoodTop: hoodMeasured,
+                    hoodUp: draft.hoodUp,
+                    shape,
+                    sizeAdjust: draft.sizeAdjust,
+                    photoOpen: draft.photoOpen,
+                  }}
+                  value={draft.sizeAdjust}
+                  onChange={(v) => set({ sizeAdjust: v })}
+                />
+              )}
 
               <Field label="季节">
                 <ChipMulti<Season> options={SEASONS} value={draft.seasons} labels={SEASON_LABELS} onChange={(v) => set({ seasons: v })} />
@@ -1444,4 +1312,102 @@ export function ItemEditor({ id, back }: { id: string | null; back?: 'review' })
 function BackThumb({ id }: { id: string }) {
   const url = useImageUrl(id);
   return <div className="thumb fill">{url ? <img src={url} alt="背面" /> : null}</div>;
+}
+
+const EMPTY_ITEM: Item = {
+  id: 'preview',
+  name: '',
+  category: 'top',
+  subtype: '',
+  color: { hex: '#888888', name: '灰色' },
+  pattern: 'solid',
+  seasons: [],
+  warmth: 2,
+  occasions: [],
+  styles: [],
+  tags: [],
+  favorite: false,
+  status: 'active',
+  images: { cutout: '', thumb: '' },
+  imageAspect: 1,
+  createdAt: 0,
+  updatedAt: 0,
+};
+
+/** 人台上的大小：默认按身材和版型定，这里可以再调大调小，调好后试搭、推荐、3D 都按这个大小 */
+function SizePreview({ item, value, onChange }: { item: Item; value: number; onChange: (v: number) => void }) {
+  const store = useStore();
+  const pct = Math.round(value * 100);
+  const step = (d: number) => onChange(Math.max(0.7, Math.min(1.4, Math.round((value + d) * 100) / 100)));
+  return (
+    <section className="size-preview" aria-label="人台上的大小">
+      <div className="stage size-preview-stage">
+        <Mannequin body={store.settings.body} items={[item]} label="人台预览" />
+      </div>
+      <div className="size-preview-side">
+        <strong>人台上的大小</strong>
+        <p className="small muted">
+          {item.shape
+            ? '已按你的身材和版型自动定好，和拍照远近、袖子摊开多少无关。'
+            : '按类别和长度摆放。'}
+          不合适可以在这里调，试搭和推荐都会用这个大小。
+        </p>
+        <div className="row">
+          <button type="button" className="btn btn-small" aria-label="小一点" onClick={() => step(-0.04)} disabled={value <= 0.7}>
+            小一点
+          </button>
+          <span className="size-preview-value" aria-live="polite">
+            {pct}%
+          </span>
+          <button type="button" className="btn btn-small" aria-label="大一点" onClick={() => step(0.04)} disabled={value >= 1.4}>
+            大一点
+          </button>
+        </div>
+        {pct !== 100 && (
+          <button type="button" className="btn btn-small btn-ghost" style={{ justifySelf: 'start', paddingLeft: 0 }} onClick={() => onChange(1)}>
+            恢复默认大小
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** 识别模型：第一次用时下载（约 56MB），之后自动从本机读取 */
+function ModelCard() {
+  const m = useMatting();
+  if (m.status === 'unsupported') return null;
+  if (m.status === 'ready') {
+    return (
+      <p className="small muted model-card-ready" role="status">
+        识别模型已准备好：白色、带白边的衣服在白底上也能认出来，照片只在本机处理。
+      </p>
+    );
+  }
+  return (
+    <section className="model-card" aria-label="识别模型">
+      <strong>白衣服、白边认得更准</strong>
+      {m.status === 'downloading' || m.status === 'preparing' ? (
+        <>
+          <p className="small muted">
+            {m.status === 'downloading' ? `正在下载识别模型 ${Math.round(m.progress * 100)}%` : '正在准备识别模型…'}
+            ，下载完成前照常按颜色去背。
+          </p>
+          <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(m.progress * 100)}>
+            <span style={{ width: `${Math.round(m.progress * 100)}%` }} />
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="small muted">
+            下载一个开源的识别模型（约 {MODEL_SIZE_MB}MB，只需一次，建议连 Wi-Fi）。它在手机上直接识别照片里的衣服，照片不上传，不收费。
+            {m.status === 'error' ? ` 上次没成功：${m.error}。` : ''}
+          </p>
+          <button type="button" className="btn btn-small" onClick={() => void prepareMatting(true)}>
+            {m.status === 'error' ? '重新下载' : '下载识别模型'}
+          </button>
+        </>
+      )}
+    </section>
+  );
 }

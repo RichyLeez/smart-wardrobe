@@ -97,7 +97,8 @@ export function TodayPage() {
   const wornItems = worn ? worn.itemIds.map((id) => items.find((i) => i.id === id)).filter((i): i is Item => !!i) : [];
   const idle = useMemo(() => idleItems(items, wearStats(records), today.date, 30), [items, records, today.date]);
   const recsVisible = !worn || showRecs;
-  const pendingCount = items.filter((i) => i.status === 'pending').length;
+  const pendingItems = items.filter((i) => i.status === 'pending');
+  const pendingCount = pendingItems.length;
 
   // 有保存的位置且天气过期时，自动联网更新一次
   useEffect(() => {
@@ -248,11 +249,11 @@ export function TodayPage() {
             </div>
             {pendingCount > 0 ? (
               <>
-                <h2>还有 {pendingCount} 件待整理</h2>
-                <p>批量录入的单品，类别是按轮廓猜的。在待整理里点一下确认，这里就会开始给出搭配建议。</p>
+                <h2>还有 {pendingCount} 件没确认</h2>
+                <p>以前批量录入的单品，类别是按轮廓猜的。打开看一下、点「确认」，这里就会开始给出搭配建议。</p>
                 <div className="row" style={{ justifyContent: 'center' }}>
-                  <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'review' })}>
-                    去整理
+                  <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: pendingItems[0].id })}>
+                    去确认
                   </button>
                 </div>
               </>
@@ -264,10 +265,6 @@ export function TodayPage() {
                   <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
                     <Icon name="camera" />
                     录入第一件
-                  </button>
-                  <button type="button" className="btn" onClick={() => ui.open({ kind: 'batch' })}>
-                    <Icon name="layers" />
-                    批量录入
                   </button>
                 </div>
                 <button type="button" className="btn btn-ghost" style={{ marginTop: 8 }} disabled={!!demoBusy} onClick={loadDemo}>
@@ -503,10 +500,10 @@ export function TodayPage() {
 
         <div className="section" style={{ display: 'grid', gap: 8 }}>
           {pendingCount > 0 && (
-            <button type="button" className="callout" onClick={() => ui.open({ kind: 'review' })}>
+            <button type="button" className="callout" onClick={() => ui.open({ kind: 'item', id: pendingItems[0].id })}>
               <Icon name="layers" />
               <span>
-                <strong>{pendingCount} 件待整理</strong>
+                <strong>{pendingCount} 件还没确认</strong>
                 <br />
                 确认类别后才会参与推荐。
               </span>

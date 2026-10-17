@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { itemImageIds } from '../core/backup';
 import { suggestGoals } from '../core/body';
 import { hoodTop } from '../core/hood';
+import { measureShape } from '../core/measure';
 import { emptyFeedback } from '../core/recommend';
 import { todayStr } from '../core/stats';
 import type {
@@ -103,6 +104,16 @@ const urlCache = new Map<string, string>();
 const revocable = new Set<string>();
 const pending = new Map<string, Promise<string | undefined>>();
 const listeners = new Set<() => void>();
+
+/**
+ * 录入页里还没保存的贴图：登记一个临时 id，人台预览可以像普通图片一样用它（也能生成简化图形）。
+ * 同一个 id 换图片时清掉旧的简化图形缓存。
+ */
+export function setPreviewImage(id: string, url: string): void {
+  forgetImages([id]);
+  urlCache.set(id, url);
+  listeners.forEach((l) => l());
+}
 
 export function imageUrlSync(id: string | undefined): string | undefined {
   return id ? urlCache.get(id) : undefined;
@@ -279,13 +290,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storage?.mode]);
 
-  // 以前录入的上衣、外套还没量过帽子：打开后在后台补量一次（量过的记为数字，没帽子记 0）
-  const hoodsMeasured = useRef(false);
+  // 以前录入的单品还没量过帽子（上衣、外套）或基准宽度（上衣、外套、连衣裙、下装）：
+  // 打开后在后台补量一次。量过的记下结果（没帽子记 0，量不出宽度记 w = 0，人台按原来的方式摆）
+  const backfilled = useRef(false);
   useEffect(() => {
-    if (!ready || hoodsMeasured.current) return;
-    hoodsMeasured.current = true;
+    if (!ready || backfilled.current) return;
+    backfilled.current = true;
+    const hooded = (i: Item) => i.category === 'top' || i.category === 'outer';
+    const shaped = (i: Item) => hooded(i) || i.category === 'dress' || i.category === 'bottom';
     const todo = latest.current.items.filter(
-      (i) => (i.category === 'top' || i.category === 'outer') && i.hoodTop === undefined && !db.isVirtualImage(i.images.cutout),
+      (i) => !db.isVirtualImage(i.images.cutout) && ((hooded(i) && i.hoodTop === undefined) || (shaped(i) && !i.shape)),
     );
     if (!todo.length) return;
     (async () => {
@@ -300,11 +314,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const d = ctx.getImageData(0, 0, c.width, c.height).data;
         const alpha = new Uint8Array(c.width * c.height);
         for (let i = 0; i < alpha.length; i++) alpha[i] = d[i * 4 + 3];
-        const t = Math.round(hoodTop(alpha, c.width, c.height) * 1000) / 1000;
-        // 这期间用户可能改过这件，以最新的为准，只补上帽子
+        // 这期间用户可能改过这件，以最新的为准，只补上缺的
         const cur = latest.current.items.find((i) => i.id === item.id);
-        if (!cur || cur.hoodTop !== undefined) continue;
-        const next = { ...cur, hoodTop: t };
+        if (!cur) continue;
+        const next = { ...cur };
+        if (hooded(cur) && cur.hoodTop === undefined) next.hoodTop = Math.round(hoodTop(alpha, c.width, c.height) * 1000) / 1000;
+        if (shaped(cur) && !cur.shape) {
+          next.shape = measureShape(alpha, c.width, c.height, cur.category, hooded(cur) ? next.hoodTop ?? 0 : 0) ?? { w: 0, cx: 0.5, top: 0 };
+        }
         await db.put('items', next);
         setData((dd) => ({ ...dd, items: dd.items.map((i) => (i.id === next.id ? next : i)) }));
         await new Promise((r) => setTimeout(r, 30));

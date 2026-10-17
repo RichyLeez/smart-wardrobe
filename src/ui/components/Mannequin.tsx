@@ -136,7 +136,7 @@ export function Mannequin({ body, items, layout, editable: editableProp, selecte
             y={r.y}
             width={r.width}
             height={r.height}
-            preserveAspectRatio="xMidYMid meet"
+            preserveAspectRatio="none"
             style={{ animationDelay: `${idx * 70}ms`, cursor: editable ? 'grab' : undefined }}
             onPointerDown={editable ? (e: React.PointerEvent<SVGImageElement>) => onPointerDown(e, item.id) : undefined}
           />

@@ -245,7 +245,7 @@ try {
   check((await previewAlpha(page, 450 / 900, 200 / 900)) === 255, '关掉开关就保留这部分');
   await sw.check();
   await page.getByRole('button', { name: '下一步' }).click();
-  await page.getByText('吊牌信息').first().waitFor();
+  await page.getByText('品牌和尺码').first().waitFor();
   const ratio = await page.evaluate(async () => {
     const img = document.querySelector('.thumb.fill img') as HTMLImageElement;
     await img.decode();

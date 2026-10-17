@@ -2041,3 +2041,70 @@ input[type='range'] {
   margin: 0 -12px;
   padding: 2px 12px;
 }
+/* 录入页：识别模型 */
+.model-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 14px;
+  border-radius: var(--r-m);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  text-align: left;
+}
+.model-card p {
+  margin: 0;
+}
+.model-card .btn {
+  justify-self: start;
+}
+.model-card-ready {
+  margin: 4px 0 0;
+}
+.progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  background: var(--tape);
+  transition: width 0.2s ease;
+}
+
+/* 录入页：人台上的大小 */
+.size-preview {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin: 14px 0 4px;
+  padding: 12px 14px;
+  border-radius: var(--r-m);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.size-preview-stage {
+  width: 112px;
+  height: 200px;
+  flex: none;
+}
+.size-preview-stage .mannequin {
+  width: 100%;
+  height: 100%;
+}
+.size-preview-side {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.size-preview-side p {
+  margin: 0;
+}
+.size-preview-value {
+  min-width: 3.2em;
+  text-align: center;
+  font-family: var(--didone);
+  font-variant-numeric: tabular-nums;
+}

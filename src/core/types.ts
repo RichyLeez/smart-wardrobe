@@ -93,6 +93,10 @@ export interface Item {
   hoodTop?: number;
   /** 试穿时不放下帽子（帽子认错了，例如高领、立领） */
   hoodUp?: boolean;
+  /** 量出的基准宽度（衣身 / 上身 / 腰头），人台上按身材定大小用；见 core/measure.ts */
+  shape?: { w: number; cx: number; top: number; bottom?: number };
+  /** 录入页里调过的大小（1 为默认） */
+  sizeAdjust?: number;
   /** 背面贴图宽高比（有背面照片时） */
   backAspect?: number;
   createdAt: number;
