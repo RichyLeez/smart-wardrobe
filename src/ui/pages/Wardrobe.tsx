@@ -24,9 +24,8 @@ export function WardrobePage() {
   const stats = useMemo(() => wearStats(records), [records]);
 
   const active = items.filter((i) => i.status === 'active');
-  // 以前批量录入、还没确认的单品（批量录入暂时停用，逐件打开确认）
-  const pendingItems = items.filter((i) => i.status === 'pending');
-  const pending = pendingItems.length;
+  // 录入时自动分类、还没核对的单品（照常参与推荐，在「整理」里成批改）
+  const unverified = active.filter((i) => i.unverified).length;
   const counts = useMemo(() => {
     const c = new Map<Filter, number>();
     for (const i of items) {
@@ -101,6 +100,12 @@ export function WardrobePage() {
       <header className="topbar">
         <h1>衣橱</h1>
         <div className="topbar-actions">
+          {active.length > 0 && (
+            <button type="button" className="btn btn-small" onClick={() => ui.open({ kind: 'organize' })}>
+              <Icon name="layers" />
+              整理
+            </button>
+          )}
           <button type="button" className="btn btn-primary btn-small" onClick={() => ui.open({ kind: 'item', id: null })}>
             <Icon name="plus" />
             录入单品
@@ -108,14 +113,9 @@ export function WardrobePage() {
         </div>
       </header>
       <div className="page">
-        {pending > 0 && (
-          <button type="button" className="callout" style={{ marginBottom: 12 }} onClick={() => ui.open({ kind: 'item', id: pendingItems[0].id })}>
-            <Icon name="layers" />
-            <span>
-              <strong>{pending} 件还没确认</strong>
-              <br />
-              以前批量录入的单品，打开看一下类别、点「确认」才会参与推荐。
-            </span>
+        {unverified > 0 && (
+          <button type="button" className="notice-line" onClick={() => ui.open({ kind: 'organize', view: 'unverified' })}>
+            {unverified} 件是录入时自动分的类，还没核对。不改也照常推荐，有空时去「整理」里成批看一眼。
           </button>
         )}
         {ready && active.length + (counts.get('archived') ?? 0) > 0 && (

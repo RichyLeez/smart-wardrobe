@@ -153,7 +153,7 @@ try {
   await page.locator('nav.tabbar').getByRole('button', { name: '衣橱' }).click();
   await page.getByRole('button', { name: '录入单品' }).first().click();
   await page.getByTestId('photo-input').setInputFiles({ name: 'tee.jpg', mimeType: 'image/jpeg', buffer: front });
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 20000 });
+  await page.getByRole('button', { name: '补充信息' }).waitFor({ timeout: 20000 });
   check((await page.getByRole('button', { name: '智能', exact: true }).getAttribute('aria-pressed')) === 'true', '默认使用智能去背');
   const smart = {
     tee: await previewAlpha(page, 0.5, 0.45),
@@ -184,7 +184,7 @@ try {
   await page.waitForFunction(() => !document.querySelector('.cutout-view .busy'));
   check((await previewAlpha(page, 0.5, 0.45)) === 255, '涂抹后重新贴合边缘，衣物仍完整');
 
-  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByRole('button', { name: '补充信息' }).click();
   await page.getByText('品牌和尺码').first().waitFor();
   check(await page.getByRole('button', { name: '拍背面' }).isVisible(), '信息页可以加背面照片');
 
@@ -193,8 +193,8 @@ try {
   await page.getByText('把衣服翻过来，拍背面').waitFor();
   await page.screenshot({ path: `${SHOTS}/3d-03-back-photo-step.png` });
   await page.getByTestId('photo-input').setInputFiles({ name: 'tee-back.jpg', mimeType: 'image/jpeg', buffer: backPhoto });
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 20000 });
-  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByRole('button', { name: '用作背面' }).waitFor({ timeout: 20000 });
+  await page.getByRole('button', { name: '用作背面' }).click();
   await page.getByText('新拍的背面，保存后生效。').waitFor();
   check(await page.getByRole('button', { name: '换一张背面' }).isVisible(), '背面照片已加上');
   await page.locator('.field', { hasText: '类别' }).getByRole('button', { name: '上衣' }).click();

@@ -256,12 +256,34 @@ export const SUBTYPES: Record<Category, Record<string, SubtypeDefaults>> = {
   },
 };
 
+/**
+ * 只知道大类、款式没认出来时用的默认值（按轮廓只猜到"上衣"的长袖衣服最常见）。
+ * 取这一类里最常见、最不容易出错的值：上衣按春秋的长袖、外套按春秋的薄外套。
+ */
+export const CATEGORY_DEFAULTS: Record<Category, SubtypeDefaults> = {
+  top: d(2, MILD_SEASONS, ['casual', 'commute'], ['casual', 'minimal'], { fit: 'regular', length: 'regular' }),
+  bottom: d(2, ALL_SEASONS, ['casual', 'commute'], ['casual', 'minimal'], { fit: 'regular', length: 'long', rise: 'mid' }),
+  dress: d(1, WARM_SEASONS, ['casual', 'date'], ['minimal', 'sweet'], { fit: 'regular', length: 'regular', rise: 'mid' }),
+  outer: d(2, MILD_SEASONS, ['casual', 'commute'], ['casual', 'minimal'], { fit: 'regular', length: 'regular' }),
+  shoes: d(2, ALL_SEASONS, ['casual', 'commute', 'travel'], ['casual', 'minimal']),
+  bag: d(1, ALL_SEASONS, ['casual', 'commute'], ['casual', 'minimal']),
+  hat: d(1, ALL_SEASONS, ['casual', 'travel'], ['casual']),
+  scarf: d(2, COLD_SEASONS, ['casual', 'commute'], ['minimal', 'casual']),
+  belt: d(1, ALL_SEASONS, ['casual', 'commute'], ['minimal']),
+  jewelry: d(1, ALL_SEASONS, ['casual', 'date'], ['minimal']),
+};
+
 export function subtypesOf(category: Category): string[] {
   return Object.keys(SUBTYPES[category]);
 }
 
 export function defaultsFor(category: Category, subtype: string): SubtypeDefaults | undefined {
   return SUBTYPES[category][subtype];
+}
+
+/** 自动分类用的默认值：认出款式时按款式，只认出大类时按大类 */
+export function classificationDefaults(category: Category, subtype: string): SubtypeDefaults {
+  return (subtype ? SUBTYPES[category][subtype] : undefined) ?? CATEGORY_DEFAULTS[category];
 }
 
 // 风格兼容度（0~1，对称）。未列出的组合默认 0.65。

@@ -34,7 +34,10 @@ export type Rise = 'high' | 'mid' | 'low';
 export type Pattern = 'solid' | 'stripe' | 'check' | 'print' | 'colorblock';
 /** 保暖度：1 轻薄 / 2 适中 / 3 厚实 */
 export type Warmth = 1 | 2 | 3;
-/** active 在用；archived 已归档；pending 批量录入后待整理（确认前不参与推荐） */
+/**
+ * active 在用；archived 已归档；pending 是以前批量录入、还没确认的旧数据——
+ * 现在自动分类的单品直接在用（带 unverified 标记），打开应用时旧的 pending 会转成这样（core/organize.ts 的 upgradeLegacyPending）
+ */
 export type ItemStatus = 'active' | 'archived' | 'pending';
 
 export interface ColorInfo {
@@ -103,7 +106,9 @@ export interface Item {
   updatedAt: number;
   /** 示例数据标记，方便一键清除 */
   demo?: boolean;
-  /** 待整理时的提示，例如"衣服和背景颜色接近，去背可能不准"；确认后去掉 */
+  /** 类别、款式是录入时系统自动分的，用户还没核对过（照常参与推荐；在「整理」里改过款式或点「没问题」后去掉） */
+  unverified?: boolean;
+  /** 自动分类时要留意的地方，例如"只认出是上衣，款式没认出""衣服碰到了照片左边"；核对后去掉 */
   reviewNote?: string;
 }
 

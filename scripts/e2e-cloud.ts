@@ -188,10 +188,10 @@ try {
   await page.locator('nav.tabbar').getByRole('button', { name: '衣橱' }).click();
   await page.getByRole('button', { name: '录入单品' }).click();
   await page.getByTestId('photo-input').setInputFiles('tests/fixtures/navy-tee.jpg');
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 15000 });
+  await page.getByRole('button', { name: '补充信息' }).waitFor({ timeout: 15000 });
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${SHOTS}/cloud-03-cutout.png` });
-  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByRole('button', { name: '补充信息' }).click();
   await page.getByRole('group').first().getByRole('button', { name: '上衣' }).click();
   await page.getByRole('button', { name: 'T恤', exact: true }).click();
   const colorName = await page.locator('.color-current span').nth(1).innerText();

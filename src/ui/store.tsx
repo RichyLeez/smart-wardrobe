@@ -6,6 +6,7 @@ import { itemImageIds } from '../core/backup';
 import { suggestGoals } from '../core/body';
 import { hoodTop } from '../core/hood';
 import { measureShape } from '../core/measure';
+import { upgradeLegacyPending } from '../core/organize';
 import { emptyFeedback } from '../core/recommend';
 import { todayStr } from '../core/stats';
 import type {
@@ -77,6 +78,8 @@ export interface Store extends AppData {
   switchToLocal(): Promise<void>;
   goals: BodyGoal[];
   saveItem(item: Item, images?: NewImage[], replacedImageIds?: string[]): Promise<void>;
+  /** 成批保存（整理页的成批修改），不涉及图片 */
+  saveItems(items: Item[]): Promise<void>;
   deleteItem(id: string): Promise<void>;
   saveOutfit(o: Outfit): Promise<void>;
   deleteOutfit(id: string): Promise<void>;
@@ -235,6 +238,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       db.getKV<FeedbackState>('feedback'),
       db.getKV<TodayState>('today'),
     ]);
+    // 以前批量录入、还没确认的单品：现在自动分类的直接在用，转成"在用、未核对"
+    const upgraded: Item[] = [];
+    for (let k = 0; k < items.length; k++) {
+      const up = upgradeLegacyPending(items[k]);
+      if (up) {
+        items[k] = up;
+        upgraded.push(up);
+      }
+    }
+    if (upgraded.length) await db.putMany('items', upgraded);
     let t = today ?? defaultToday();
     if (t.date !== todayStr()) {
       t = {
@@ -374,18 +387,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         };
       });
     },
+    async saveItems(list) {
+      if (!list.length) return;
+      await db.putMany('items', list);
+      const byId = new Map(list.map((i) => [i.id, i]));
+      latest.current = { ...latest.current, items: latest.current.items.map((i) => byId.get(i.id) ?? i) };
+      setData((d) => ({ ...d, items: d.items.map((i) => byId.get(i.id) ?? i) }));
+    },
     async deleteItem(id) {
-      const item = data.items.find((i) => i.id === id);
+      // 读最新的数据：整理页里连续删好几件时，同一套装要依次去掉每一件
+      const cur = latest.current;
+      const item = cur.items.find((i) => i.id === id);
       if (!item) return;
       const imageIds = itemImageIds(item);
       // 套装里去掉这件；穿搭记录保留名称快照
-      const outfits = data.outfits
+      const outfits = cur.outfits
         .filter((o) => o.itemIds.includes(id))
         .map((o) => ({ ...o, itemIds: o.itemIds.filter((x) => x !== id), updatedAt: Date.now() }));
       await db.putMany('outfits', outfits);
       await db.deleteMany('items', [id]);
       await db.deleteMany('images', imageIds);
       forgetImages(imageIds);
+      latest.current = {
+        ...latest.current,
+        items: latest.current.items.filter((i) => i.id !== id),
+        outfits: latest.current.outfits.map((o) => outfits.find((x) => x.id === o.id) ?? o),
+      };
       setData((d) => ({
         ...d,
         items: d.items.filter((i) => i.id !== id),

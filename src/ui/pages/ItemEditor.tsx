@@ -16,6 +16,7 @@ import {
 } from '../../core/background';
 import {
   CATEGORIES,
+  CATEGORY_DEFAULTS,
   CATEGORY_LABELS,
   FIELD_APPLICABILITY,
   FIT_LABELS,
@@ -44,6 +45,7 @@ import { measureShape } from '../../core/measure';
 import { PRIOR_WEIGHT } from '../../core/smartcut';
 import { smartCut } from '../../core/smartcut';
 import { colorPlus } from '../../core/pending';
+import { autoReviewNote, type OrganizeView } from '../../core/organize';
 import { defaultOpenable } from '../../core/styling';
 import { analyzeSizeFit } from '../../core/sizefit';
 import { wearStats } from '../../core/stats';
@@ -200,7 +202,7 @@ function draftFromItem(i: Item): Draft {
     photoOpen: !!i.photoOpen,
     hoodUp: !!i.hoodUp,
     sizeAdjust: i.sizeAdjust ?? 1,
-    categoryGuessed: false,
+    categoryGuessed: !!i.unverified,
   };
 }
 
@@ -227,7 +229,10 @@ const EMPTY_DRAFT: Draft = {
   categoryGuessed: false,
 };
 
-/** 选定子类时套用常用默认值（保暖度、季节、场合、风格、版型、长度、腰线） */
+/**
+ * 选定子类时套用常用默认值（保暖度、季节、场合、风格、版型、长度、腰线）；
+ * 只知道大类（按轮廓只猜到"上衣"、或手动换了大类）时套用大类的默认值，款式留空
+ */
 function withSubtype(d: Draft, category: Category, subtype: string | undefined): Draft {
   const app = FIELD_APPLICABILITY[category];
   const base: Draft = {
@@ -237,11 +242,10 @@ function withSubtype(d: Draft, category: Category, subtype: string | undefined):
     length: app.length ? d.length : undefined,
     rise: app.rise ? d.rise : undefined,
   };
-  if (!subtype) return { ...base, subtype: d.category === category ? d.subtype : null };
-  const def = defaultsFor(category, subtype);
+  const def = subtype ? defaultsFor(category, subtype) : CATEGORY_DEFAULTS[category];
   return {
     ...base,
-    subtype,
+    subtype: subtype ?? null,
     ...(def
       ? {
           warmth: def.warmth,
@@ -256,7 +260,7 @@ function withSubtype(d: Draft, category: Category, subtype: string | undefined):
   };
 }
 
-export function ItemEditor({ id }: { id: string | null }) {
+export function ItemEditor({ id, back }: { id: string | null; back?: { kind: 'organize'; view?: OrganizeView } }) {
   const store = useStore();
   const ui = useUI();
   const existing = id ? store.items.find((i) => i.id === id) ?? null : null;
@@ -281,6 +285,8 @@ export function ItemEditor({ id }: { id: string | null }) {
   const [draft, setDraft] = useState<Draft>(existing ? draftFromItem(existing) : EMPTY_DRAFT);
   const [showPalette, setShowPalette] = useState(false);
   const [showMore, setShowMore] = useState(false);
+  /** 版型、长度、腰线：按款式自动填好，平时收起来 */
+  const [showShape, setShowShape] = useState(false);
   const matting = useMatting();
   const canMatting = useMemo(() => mattingAvailable(), []);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -313,9 +319,10 @@ export function ItemEditor({ id }: { id: string | null }) {
   const stats = existing ? wearStats(store.records).get(existing.id) : undefined;
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
-  const closeEditor = () => ui.close();
-  /** 以前批量录入、还没确认的单品 */
-  const isPending = existing?.status === 'pending';
+  // 从整理页打开的，关掉后回到整理页
+  const closeEditor = () => (back ? ui.open(back) : ui.close());
+  /** 类别和款式是录入时自动分的，还没核对过 */
+  const unverified = !!existing?.unverified;
 
   // 用过一次识别模型后，打开录入页就在后台准备好（从本机缓存读取）
   useEffect(() => {
@@ -502,10 +509,15 @@ export function ItemEditor({ id }: { id: string | null }) {
     if (work && mode === 'smart') void recompute(work, 'smart');
   }
 
-  async function finishCutout() {
+  /**
+   * 去背完成：裁切、转正、取色、按轮廓猜类别。
+   * auto：新录入时直接按猜到的类别存进衣橱（标为未核对）；认不出是什么时转到信息页让用户选。
+   */
+  async function finishCutout(auto = false) {
     if (!work) return;
     setBusy('正在生成贴图…');
     await new Promise((r) => setTimeout(r, 20));
+    let saving = false;
     try {
       const alpha = currentAlpha(work);
       const box = alphaBBox(alpha, work.rgba.width, work.rgba.height);
@@ -525,7 +537,8 @@ export function ItemEditor({ id }: { id: string | null }) {
         return;
       }
       const colors = suggestColors(extractColors(cropped.data, 4));
-      setPrepared({ base: up.image, turns: 0, archive: work.archive, colors });
+      const prep: Prepared = { base: up.image, turns: 0, archive: work.archive, colors };
+      setPrepared(prep);
       // 按轮廓猜类别（不看摊开的帽子）：只在还没选类别时填上，用户可以改
       let guess = null;
       if (!noRemoval) {
@@ -534,41 +547,49 @@ export function ItemEditor({ id }: { id: string | null }) {
         if (hood > 0) a.fill(0, 0, Math.round(up.image.height * hood) * up.image.width);
         guess = guessCategory(a, up.image.width, up.image.height, colors?.primary.hex);
       }
-      setDraft((d) => {
-        let next = d;
-        if (guess && !d.category) {
-          next = { ...withSubtype(d, guess.category, guess.subtype || undefined), categoryGuessed: true };
-        }
-        if (!colors) return next;
+      let next = draft;
+      if (guess && !draft.category) {
+        next = { ...withSubtype(draft, guess.category, guess.subtype || undefined), categoryGuessed: true };
+      }
+      if (colors) {
         const color = { hex: colors.primary.hex, name: colors.primary.name };
         const color2 = colors.multiColor && colors.secondary ? { ...colors.secondary } : undefined;
-        return { ...next, color, color2, name: d.nameTouched ? d.name : autoName(color.name, next.subtype) };
-      });
-      if (up.angle && Math.abs(up.angle) >= 45) ui.toast('已经把照片转正了，方向不对可以点「转 90°」');
+        next = { ...next, color, color2, name: draft.nameTouched ? draft.name : autoName(color.name, next.subtype, next.category) };
+      }
+      setDraft(next);
+      if (auto && guess && next.category && next.color) {
+        // 直接存：类别、款式、季节场合风格都按轮廓和款式自动填好，以后在「整理」里成批改
+        saving = true;
+        setBusy(null);
+        const note = autoReviewNote({ guess, frameSides: edgeContact?.sides, lowContrast });
+        await doSave(next, prep, { auto: true, note });
+        return;
+      }
+      if (auto) ui.toast('没认出这是什么，选一下类别再存');
+      else if (up.angle && Math.abs(up.angle) >= 45) ui.toast('已经把照片转正了，方向不对可以点「转 90°」');
       setStep('info');
     } finally {
-      setBusy(null);
+      if (!saving) setBusy(null);
     }
   }
 
   // ---------- 字段 ----------
 
-  function autoName(colorName: string | undefined, subtype: string | null): string {
-    if (!subtype) return colorName ?? '';
-    return colorPlus(colorName ?? '', subtype);
+  /** 自动名称：颜色 + 款式；款式没定时用大类（"藏青上衣"） */
+  function autoName(colorName: string | undefined, subtype: string | null, category: Category | null = draft.category): string {
+    const kind = subtype || (category ? CATEGORY_LABELS[category] : '');
+    if (!kind) return colorName ?? '';
+    return colorPlus(colorName ?? '', kind);
   }
 
   function chooseCategory(c: Category | null) {
     if (!c) return;
-    setDraft((d) => ({
-      ...d,
-      category: c,
-      subtype: null,
-      categoryGuessed: false,
-      fit: FIELD_APPLICABILITY[c].fit ? d.fit : undefined,
-      length: FIELD_APPLICABILITY[c].length ? d.length : undefined,
-      rise: FIELD_APPLICABILITY[c].rise ? d.rise : undefined,
-    }));
+    setDraft((d) => {
+      // 换了大类：先按大类填好季节、场合、风格等（选了款式再按款式填）；点的还是原来的大类时只去掉"猜的"提示
+      if (d.category === c) return { ...d, categoryGuessed: false };
+      const next = withSubtype(d, c, undefined);
+      return { ...next, categoryGuessed: false, name: d.nameTouched ? d.name : autoName(d.color?.name, null, c) };
+    });
   }
 
   function chooseSubtype(s: string | null) {
@@ -576,7 +597,7 @@ export function ItemEditor({ id }: { id: string | null }) {
     const cat = draft.category;
     setDraft((d) => {
       const next = withSubtype(d, cat, s);
-      return { ...next, categoryGuessed: false, name: d.nameTouched ? d.name : autoName(d.color?.name, s) };
+      return { ...next, categoryGuessed: false, name: d.nameTouched ? d.name : autoName(d.color?.name, s, cat) };
     });
   }
 
@@ -587,31 +608,46 @@ export function ItemEditor({ id }: { id: string | null }) {
     return d.category && d.subtype ? defaultsFor(d.category, d.subtype)?.fit : undefined;
   }
 
-  async function save() {
-    if (!draft.category) return ui.toast('请选择类别');
-    if (!draft.subtype) return ui.toast('请选择子类');
-    if (!draft.color) return ui.toast('请选择颜色');
-    const name = draft.name.trim() || autoName(draft.color.name, draft.subtype);
-    if (!existing && !prepared) return ui.toast('请先拍照或选择照片');
+  const save = () => doSave(draft, prepared, {});
+
+  /**
+   * 保存。auto：录入时直接按自动分类存（标为未核对，note 记下要留意的地方）；
+   * 否则是在信息页里看过、点了保存，算核对过。款式可以不选（只知道大类时）。
+   */
+  async function doSave(d: Draft, prep: Prepared | null, opts: { auto?: boolean; note?: string }) {
+    if (!d.category) return ui.toast('请选择类别');
+    if (!d.color) return ui.toast('请选择颜色');
+    const category = d.category;
+    const subtype = d.subtype ?? '';
+    const name = d.name.trim() || autoName(d.color.name, subtype, category);
+    if (!existing && !prep) return ui.toast('请先拍照或选择照片');
     setBusy('正在保存…');
     try {
+      // 直接存时还没经过渲染，贴图、帽子和基准宽度在这里现算
+      const comp = prep ? (prep === prepared && composed ? composed : compose(prep)) : null;
+      const hoodAt = comp ? comp.hood : existing?.hoodTop;
+      const shapeAt = comp
+        ? measureShape(comp.alpha, comp.w, comp.h, category, comp.hood) ?? undefined
+        : existing && existing.category === category
+          ? existing.shape
+          : undefined;
       const now = Date.now();
       const images: NewImage[] = [];
       let imageRefs = existing?.images;
       let aspect = existing?.imageAspect ?? 1;
       const replaced: string[] = [];
-      if (prepared && composed) {
+      if (prep && comp) {
         const cutoutId = newId('img-');
         const thumbId = newId('img-');
         const originalId = newId('img-');
-        const thumb = scaleCanvas(composed.cutout, 280);
-        images.push({ id: cutoutId, blob: await transparentBlob(composed.cutout), width: composed.cutout.width, height: composed.cutout.height });
+        const thumb = scaleCanvas(comp.cutout, 280);
+        images.push({ id: cutoutId, blob: await transparentBlob(comp.cutout), width: comp.cutout.width, height: comp.cutout.height });
         images.push({ id: thumbId, blob: await transparentBlob(thumb), width: thumb.width, height: thumb.height });
-        images.push({ id: originalId, blob: await canvasToBlob(prepared.archive, 'image/jpeg', 0.85), width: prepared.archive.width, height: prepared.archive.height });
+        images.push({ id: originalId, blob: await canvasToBlob(prep.archive, 'image/jpeg', 0.85), width: prep.archive.width, height: prep.archive.height });
         if (existing) replaced.push(existing.images.cutout, existing.images.thumb, ...(existing.images.original ? [existing.images.original] : []));
         // 只换正面时保留原来的背面
         imageRefs = { ...imageRefs, cutout: cutoutId, thumb: thumbId, original: originalId };
-        aspect = composed.aspect;
+        aspect = comp.aspect;
       }
       let backAspect = existing?.backAspect;
       if (preparedBack && composedBack) {
@@ -630,13 +666,15 @@ export function ItemEditor({ id }: { id: string | null }) {
         imageRefs = { ...imageRefs!, backCutout: undefined, backThumb: undefined, backOriginal: undefined };
         backAspect = undefined;
       }
-      const app = FIELD_APPLICABILITY[draft.category];
+      const app = FIELD_APPLICABILITY[category];
+      // 用传进来的草稿（直接存时还没渲染到 state 里）
+      const draft = d;
       const item: Item = {
         id: existing?.id ?? newId('item-'),
         name,
-        category: draft.category,
-        subtype: draft.subtype,
-        color: draft.color,
+        category,
+        subtype,
+        color: d.color,
         color2: draft.color2,
         pattern: draft.pattern,
         seasons: draft.seasons,
@@ -658,28 +696,31 @@ export function ItemEditor({ id }: { id: string | null }) {
           .map((t) => t.trim())
           .filter(Boolean),
         favorite: draft.favorite,
-        openable: draft.category === 'outer' && !draft.photoOpen ? draft.openable : undefined,
-        photoOpen: draft.category === 'outer' && draft.photoOpen ? true : undefined,
+        openable: category === 'outer' && !draft.photoOpen ? draft.openable : undefined,
+        photoOpen: category === 'outer' && draft.photoOpen ? true : undefined,
         // 换了照片按这次的贴图量帽子；没换照片时沿用原来的（旧单品在打开时补量）
-        hoodTop: hoodMeasured !== undefined ? Math.round(hoodMeasured * 1000) / 1000 : undefined,
-        hoodUp: hoodFrac > 0 && draft.hoodUp ? true : undefined,
-        shape,
+        hoodTop: hoodAt !== undefined ? Math.round(hoodAt * 1000) / 1000 : undefined,
+        hoodUp: (hoodAt ?? 0) > 0 && draft.hoodUp ? true : undefined,
+        shape: shapeAt,
         sizeAdjust: Math.abs(draft.sizeAdjust - 1) > 0.001 ? draft.sizeAdjust : undefined,
-        // 待整理的单品保存即确认
         status: existing && existing.status !== 'pending' ? existing.status : 'active',
+        // 直接存的标为未核对；在这里看过、点了保存的算核对过
+        unverified: opts.auto ? true : undefined,
+        reviewNote: opts.auto ? opts.note : undefined,
         images: imageRefs!,
         imageAspect: aspect,
         backAspect: imageRefs!.backCutout ? backAspect : undefined,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
-        demo: existing?.demo && !prepared && !preparedBack && !removeBack ? existing.demo : undefined,
+        demo: existing?.demo && !prep && !preparedBack && !removeBack ? existing.demo : undefined,
       };
       await store.saveItem(item, images, replaced);
       if (existing) {
-        ui.toast(isPending ? '已确认，放进衣橱了' : '已保存');
+        ui.toast('已保存');
         closeEditor();
       } else {
-        ui.toast(`已录入 ${name}`, { label: '继续录入', run: () => ui.open({ kind: 'item', id: null }) });
+        const what = opts.auto ? (subtype ? '，类别是自动认的' : `，只认出是${CATEGORY_LABELS[category]}，款式可以在「整理」里补`) : '';
+        ui.toast(`已录入 ${name}${what}`, { label: '继续录入', run: () => ui.open({ kind: 'item', id: null }) });
         ui.close();
       }
     } catch (e) {
@@ -719,6 +760,8 @@ export function ItemEditor({ id }: { id: string | null }) {
     ? analyzeSizeFit({ category: cat, subtype: draft.subtype ?? undefined, fit: baseFitOf(draft), size: draft.size }, store.settings.body)
     : null;
   const isNew = !existing;
+  // 填了尺码、号型对比有结论时自动展开（结论写在版型下面）
+  const shapeOpen = showShape || !!sizeFit?.notes.length;
   const steps: Array<{ key: Step; label: string }> = [
     { key: 'photo', label: side === 'back' ? '1 背面' : '1 照片' },
     { key: 'cutout', label: '2 去背' },
@@ -747,7 +790,7 @@ export function ItemEditor({ id }: { id: string | null }) {
           <h1>{isNew ? '录入单品' : existing.name}</h1>
           {step === 'info' ? (
             <button type="button" className="btn btn-primary btn-small" disabled={!!busy} onClick={save}>
-              {isPending ? '确认' : '保存'}
+              保存
             </button>
           ) : (
             <span style={{ width: 40 }} />
@@ -933,22 +976,41 @@ export function ItemEditor({ id }: { id: string | null }) {
                   </Field>
                 </>
               )}
-              <div className="row">
-                <button type="button" className="btn" onClick={() => setStep('photo')}>
-                  重拍
-                </button>
-                <button type="button" className="btn btn-primary grow" disabled={!!busy} onClick={finishCutout}>
-                  下一步
-                </button>
-              </div>
+              {isNew && side === 'front' ? (
+                <>
+                  <div className="row">
+                    <button type="button" className="btn" onClick={() => setStep('photo')}>
+                      重拍
+                    </button>
+                    <button type="button" className="btn" disabled={!!busy} onClick={() => void finishCutout(false)}>
+                      补充信息
+                    </button>
+                    <button type="button" className="btn btn-primary grow" disabled={!!busy} onClick={() => void finishCutout(true)}>
+                      存进衣橱
+                    </button>
+                  </div>
+                  <p className="small muted" style={{ margin: 0 }}>
+                    「存进衣橱」按衣服轮廓自动分好类别和款式，不对的以后在衣橱的「整理」里成批改。要拍背面、填品牌尺码就点「补充信息」。
+                  </p>
+                </>
+              ) : (
+                <div className="row">
+                  <button type="button" className="btn" onClick={() => setStep('photo')}>
+                    重拍
+                  </button>
+                  <button type="button" className="btn btn-primary grow" disabled={!!busy} onClick={() => void finishCutout(false)}>
+                    {side === 'back' ? '用作背面' : '下一步'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
           {step === 'info' && (
             <div>
-              {isPending && (
+              {unverified && (
                 <div className="warnbox" style={{ marginBottom: 12 }}>
-                  这件是批量录入的，还没确认。{existing?.reviewNote ? `${existing.reviewNote}。` : ''}改好后点「确认」，才会参与推荐。
+                  这件的类别和款式是录入时自动分的{existing?.reviewNote ? `：${existing.reviewNote}` : ''}。看一眼没问题就点「保存」，以后就不算未核对了。
                 </div>
               )}
               <div className="row" style={{ alignItems: 'flex-start', gap: 14, marginBottom: 6 }}>
@@ -1164,7 +1226,7 @@ export function ItemEditor({ id }: { id: string | null }) {
                           setDraft((d) => ({
                             ...d,
                             color: { hex: p.hex, name: p.name },
-                            name: d.nameTouched ? d.name : autoName(p.name, d.subtype),
+                            name: d.nameTouched ? d.name : autoName(p.name, d.subtype, d.category),
                           }));
                           setShowPalette(false);
                         }}
@@ -1210,35 +1272,53 @@ export function ItemEditor({ id }: { id: string | null }) {
                 </div>
               )}
 
-              {app?.fit && (
-                <Field label="版型" hint={draft.size.trim() ? '你穿上的效果' : undefined}>
-                  <Segmented<Fit> options={['slim', 'regular', 'loose']} value={draft.fit} labels={FIT_LABELS} onChange={(v) => set({ fit: v })} />
-                  {sizeFit && (
-                    <div className="fit-analysis">
-                      <NoteList notes={sizeFit.notes} />
-                      {sizeFit.effectiveFit && sizeFit.effectiveFit !== draft.fit && (
-                        <button type="button" className="btn btn-small" onClick={() => set({ fit: sizeFit.effectiveFit })}>
-                          版型改为{FIT_LABELS[sizeFit.effectiveFit]}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </Field>
+              {(app?.fit || app?.length || app?.rise) && (
+                <div className="field">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    style={{ justifySelf: 'start', paddingLeft: 0 }}
+                    onClick={() => setShowShape((v) => !v)}
+                    aria-expanded={shapeOpen}
+                  >
+                    {shapeOpen ? '收起版型、长度、腰线' : '版型、长度、腰线'}
+                  </button>
+                  {!shapeOpen && <span className="field-hint">已按款式自动填好，需要时再改</span>}
+                </div>
               )}
-              {app?.length && cat && (
-                <Field label="长度">
-                  <Segmented<Length>
-                    options={['short', 'regular', 'long']}
-                    value={draft.length}
-                    labels={lengthLabels(cat, draft.subtype ?? undefined)}
-                    onChange={(v) => set({ length: v })}
-                  />
-                </Field>
-              )}
-              {app?.rise && (
-                <Field label={cat === 'dress' ? '腰线' : '裤腰/裙腰'}>
-                  <Segmented<Rise> options={['high', 'mid', 'low']} value={draft.rise} labels={RISE_LABELS} onChange={(v) => set({ rise: v })} />
-                </Field>
+              {shapeOpen && (
+                <>
+                {app?.fit && (
+                  <Field label="版型" hint={draft.size.trim() ? '你穿上的效果' : undefined}>
+                    <Segmented<Fit> options={['slim', 'regular', 'loose']} value={draft.fit} labels={FIT_LABELS} onChange={(v) => set({ fit: v })} />
+                    {sizeFit && (
+                      <div className="fit-analysis">
+                        <NoteList notes={sizeFit.notes} />
+                        {sizeFit.effectiveFit && sizeFit.effectiveFit !== draft.fit && (
+                          <button type="button" className="btn btn-small" onClick={() => set({ fit: sizeFit.effectiveFit })}>
+                            版型改为{FIT_LABELS[sizeFit.effectiveFit]}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </Field>
+                )}
+                {app?.length && cat && (
+                  <Field label="长度">
+                    <Segmented<Length>
+                      options={['short', 'regular', 'long']}
+                      value={draft.length}
+                      labels={lengthLabels(cat, draft.subtype ?? undefined)}
+                      onChange={(v) => set({ length: v })}
+                    />
+                  </Field>
+                )}
+                {app?.rise && (
+                  <Field label={cat === 'dress' ? '腰线' : '裤腰/裙腰'}>
+                    <Segmented<Rise> options={['high', 'mid', 'low']} value={draft.rise} labels={RISE_LABELS} onChange={(v) => set({ rise: v })} />
+                  </Field>
+                )}
+                </>
               )}
               {cat && draft.color && (previewId || existing) && (
                 <SizePreview
@@ -1291,11 +1371,9 @@ export function ItemEditor({ id }: { id: string | null }) {
               </button>
               {existing && (
                 <div className="row" style={{ marginTop: 10 }}>
-                  {!isPending && (
-                    <button type="button" className="btn grow" onClick={toggleArchive}>
-                      {existing.status === 'active' ? '归档' : '恢复到衣橱'}
-                    </button>
-                  )}
+                  <button type="button" className="btn grow" onClick={toggleArchive}>
+                    {existing.status === 'active' ? '归档' : '恢复到衣橱'}
+                  </button>
                   <button type="button" className="btn btn-danger grow" onClick={remove}>
                     删除
                   </button>

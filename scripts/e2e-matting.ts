@@ -183,7 +183,7 @@ try {
   check(await page.getByRole('button', { name: '下载识别模型' }).isVisible(), '录入页提示可以下载识别模型');
   check(!(await page.getByRole('button', { name: '批量录入' }).isVisible()) && !(await page.getByText('衣服多？').isVisible()), '没有批量录入入口');
   await page.getByTestId('photo-input').setInputFiles({ name: 'tee.jpg', mimeType: 'image/jpeg', buffer: photo });
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: '补充信息' }).waitFor({ timeout: 30000 });
   // 下摆中间（照片里 x 450，y 150 + 186×3.2）
   const hemX = 450 / 900;
   const hemY = (150 + 186 * 3.2) / 900;
@@ -199,14 +199,14 @@ try {
 
   console.log('用识别模型去背：');
   await page.getByTestId('photo-input').setInputFiles({ name: 'tee.jpg', mimeType: 'image/jpeg', buffer: photo });
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 180000 });
+  await page.getByRole('button', { name: '补充信息' }).waitFor({ timeout: 180000 });
   check(await page.getByText('已用识别模型找出衣服').isVisible(), '提示用了识别模型');
   const hemAfter = await previewAlpha(page, hemX, hemY);
   check(hemAfter > 200, `白下摆保留下来（${hemAfter}）`);
   const sheet = await previewAlpha(page, 0.5, 0.95);
   check(sheet < 128, `下摆下面的床单仍然去掉（预览里去掉的部分是半透明的：${sheet}）`);
   await page.locator('.cutout-view').screenshot({ path: `${SHOTS}/matting-02-cutout.png` });
-  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByRole('button', { name: '补充信息' }).click();
   await page.locator('#item-name').waitFor();
 
   console.log('类别和人台上的大小：');

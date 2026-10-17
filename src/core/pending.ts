@@ -2,7 +2,7 @@
 // 用户在"待整理"里点一下类别、子类再确认，确认后才参与推荐。
 // 全部是纯函数。
 
-import { CATEGORY_LABELS, FIELD_APPLICABILITY, defaultsFor } from './catalog';
+import { CATEGORY_LABELS, FIELD_APPLICABILITY, classificationDefaults } from './catalog';
 import { frameContactText, type FrameSide } from './frame';
 import type { CategoryGuess } from './guess';
 import type { Category, ColorInfo, ImageRefs, Item } from './types';
@@ -18,10 +18,14 @@ export function autoName(colorName: string, category: Category, subtype: string)
   return colorPlus(colorName, subtype || CATEGORY_LABELS[category]);
 }
 
-/** 换类别、子类：套用子类的常用默认值；名称还是自动名称时一起更新 */
+/**
+ * 换类别、子类：套用子类的常用默认值（没有子类时用大类的默认值）；名称还是自动名称时一起更新。
+ * 只是换成同一大类的"款式不确定"时，保留原来的季节、场合、风格。
+ */
 export function withCategory(item: Item, category: Category, subtype: string): Item {
   const app = FIELD_APPLICABILITY[category];
-  const def = subtype ? defaultsFor(category, subtype) : undefined;
+  const keep = !subtype && category === item.category;
+  const def = keep ? undefined : classificationDefaults(category, subtype);
   const renamed = item.name === autoName(item.color.name, item.category, item.subtype);
   const next: Item = {
     ...item,

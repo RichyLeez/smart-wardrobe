@@ -1,6 +1,7 @@
 // 界面层状态：当前标签页、全屏覆盖层、提示条和确认框。
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import type { OrganizeView } from '../core/organize';
 import type { Occasion, Placement, RecordSource, Styling, WearRecord } from '../core/types';
 import { Sheet } from './components/Controls';
 
@@ -20,7 +21,9 @@ export interface RecordDraft {
 }
 
 export type Overlay = (
-  | { kind: 'item'; id: string | null }
+  /** back：从整理页打开的单品，关掉后回到整理页 */
+  | { kind: 'item'; id: string | null; back?: { kind: 'organize'; view?: OrganizeView } }
+  | { kind: 'organize'; view?: OrganizeView }
   | { kind: 'record'; draft: RecordDraft }
   | { kind: 'settings' }
   | { kind: 'view3d'; itemIds: string[]; layout?: Record<string, Placement>; styling?: Styling; title?: string }

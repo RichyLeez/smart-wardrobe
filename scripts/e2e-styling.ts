@@ -228,7 +228,7 @@ try {
   await page.getByRole('button', { name: '录入单品' }).first().click();
   check(await page.getByText('挂在衣架上拍也可以').isVisible(), '拍照提示说明可以挂着拍');
   await page.getByTestId('photo-input').setInputFiles({ name: 'hanging.jpg', mimeType: 'image/jpeg', buffer: photo });
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 20000 });
+  await page.getByRole('button', { name: '补充信息' }).waitFor({ timeout: 20000 });
   const sw = page.locator('label.switch', { hasText: '去掉衣架' }).locator('input');
   check(await sw.isChecked(), '认出衣架并默认去掉');
   const hook = await previewAlpha(page, 450 / 900, 200 / 900);
@@ -244,7 +244,7 @@ try {
   await sw.uncheck();
   check((await previewAlpha(page, 450 / 900, 200 / 900)) === 255, '关掉开关就保留这部分');
   await sw.check();
-  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByRole('button', { name: '补充信息' }).click();
   await page.getByText('品牌和尺码').first().waitFor();
   const ratio = await page.evaluate(async () => {
     const img = document.querySelector('.thumb.fill img') as HTMLImageElement;

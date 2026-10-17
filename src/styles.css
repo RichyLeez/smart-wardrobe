@@ -2108,3 +2108,132 @@ input[type='range'] {
   font-family: var(--didone);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- 整理（自动分类后成批修改） ---------- */
+
+.notice-line {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 0;
+  border-left: 3px solid var(--tape);
+  border-radius: 0 var(--r-s) var(--r-s) 0;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--fs-s);
+  text-align: left;
+}
+.notice-line strong {
+  color: var(--ink);
+  font-weight: 600;
+  margin: 0 2px;
+}
+.overlay-inner.with-bar {
+  padding-bottom: calc(150px + var(--safe-b));
+}
+.org-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.org-tile {
+  position: relative;
+  min-width: 0;
+}
+.org-pick {
+  width: 100%;
+  display: block;
+}
+.org-pick .thumb {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  transition: outline-color 0.12s;
+}
+.org-pick[aria-pressed='true'] .thumb {
+  outline-color: var(--ink);
+}
+.org-check {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  color: var(--on-ink);
+}
+.org-pick[aria-pressed='true'] .org-check {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.org-check svg {
+  width: 14px;
+  height: 14px;
+}
+.org-edit {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink-2);
+  display: grid;
+  place-items: center;
+}
+.org-edit svg {
+  width: 16px;
+  height: 16px;
+}
+.org-flag {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tape);
+  flex: none;
+}
+.org-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 520px;
+  z-index: 45;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -6px 18px rgba(20, 23, 30, 0.08);
+  padding: 10px var(--gutter) calc(12px + var(--safe-b));
+}
+.org-bar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: var(--fs-s);
+}
+.org-bar .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.org-bar .chip svg {
+  width: 16px;
+  height: 16px;
+}
+.chip-danger {
+  color: var(--warn);
+}
+.chip-partial {
+  border-style: dashed;
+  border-color: var(--ink-3);
+  background: var(--soft);
+  color: var(--ink);
+}

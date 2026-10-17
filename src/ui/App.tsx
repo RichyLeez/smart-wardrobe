@@ -7,6 +7,7 @@ import { RecordsPage } from './pages/Records';
 import { SettingsPage } from './pages/Settings';
 import { TodayPage } from './pages/Today';
 import { MatchPage } from './pages/MatchPage';
+import { OrganizePage } from './pages/Organize';
 import { Viewer3D } from './pages/Viewer3D';
 import { WardrobePage } from './pages/Wardrobe';
 import { openPermissionPanel } from '../storage/db';
@@ -165,7 +166,8 @@ function Shell() {
         </div>
       </nav>
       <ErrorBoundary resetKey={overlay ? `${overlay.kind}-${overlay.nonce}` : 'none'}>
-        {overlay?.kind === 'item' && <ItemEditor key={overlay.nonce} id={overlay.id} />}
+        {overlay?.kind === 'item' && <ItemEditor key={overlay.nonce} id={overlay.id} back={overlay.back} />}
+        {overlay?.kind === 'organize' && <OrganizePage key={overlay.nonce} view={overlay.view} />}
         {overlay?.kind === 'record' && <RecordEditor key={overlay.nonce} draft={overlay.draft} />}
         {overlay?.kind === 'settings' && <SettingsPage />}
         {overlay?.kind === 'match' && <MatchPage key={overlay.nonce} itemId={overlay.itemId} />}

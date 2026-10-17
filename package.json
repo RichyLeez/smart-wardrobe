@@ -15,7 +15,8 @@
     "e2e:smart": "node --import tsx scripts/e2e-smart.ts e2e-shots",
     "e2e:styling": "node --import tsx scripts/e2e-styling.ts e2e-shots",
     "e2e:capture": "node --import tsx scripts/e2e-capture.ts e2e-shots",
-    "e2e:matting": "node --import tsx scripts/e2e-matting.ts e2e-shots"
+    "e2e:matting": "node --import tsx scripts/e2e-matting.ts e2e-shots",
+    "e2e:organize": "node --import tsx scripts/e2e-organize.ts e2e-shots"
   },
   "dependencies": {
     "jszip": "^3.10.1",

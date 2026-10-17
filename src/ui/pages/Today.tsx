@@ -97,8 +97,6 @@ export function TodayPage() {
   const wornItems = worn ? worn.itemIds.map((id) => items.find((i) => i.id === id)).filter((i): i is Item => !!i) : [];
   const idle = useMemo(() => idleItems(items, wearStats(records), today.date, 30), [items, records, today.date]);
   const recsVisible = !worn || showRecs;
-  const pendingItems = items.filter((i) => i.status === 'pending');
-  const pendingCount = pendingItems.length;
 
   // 有保存的位置且天气过期时，自动联网更新一次
   useEffect(() => {
@@ -238,7 +236,7 @@ export function TodayPage() {
     </header>
   );
 
-  if (items.length === pendingCount) {
+  if (items.length === 0) {
     return (
       <>
         {header}
@@ -247,31 +245,17 @@ export function TodayPage() {
             <div className="stage">
               <Mannequin body={settings.body} items={[]} />
             </div>
-            {pendingCount > 0 ? (
-              <>
-                <h2>还有 {pendingCount} 件没确认</h2>
-                <p>以前批量录入的单品，类别是按轮廓猜的。打开看一下、点「确认」，这里就会开始给出搭配建议。</p>
-                <div className="row" style={{ justifyContent: 'center' }}>
-                  <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: pendingItems[0].id })}>
-                    去确认
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h2>先把衣橱搬进来</h2>
-                <p>把衣服平铺拍一张，应用会自动去掉背景、识别颜色。录入几件上衣和下装后，这里每天会给出搭配建议。</p>
-                <div className="row" style={{ justifyContent: 'center' }}>
-                  <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
-                    <Icon name="camera" />
-                    录入第一件
-                  </button>
-                </div>
-                <button type="button" className="btn btn-ghost" style={{ marginTop: 8 }} disabled={!!demoBusy} onClick={loadDemo}>
-                  {demoBusy ?? '用示例衣橱试试'}
-                </button>
-              </>
-            )}
+            <h2>先把衣橱搬进来</h2>
+            <p>把衣服平铺拍一张，应用会自动去掉背景、识别颜色。录入几件上衣和下装后，这里每天会给出搭配建议。</p>
+            <div className="row" style={{ justifyContent: 'center' }}>
+              <button type="button" className="btn btn-primary" onClick={() => ui.open({ kind: 'item', id: null })}>
+                <Icon name="camera" />
+                录入第一件
+              </button>
+            </div>
+            <button type="button" className="btn btn-ghost" style={{ marginTop: 8 }} disabled={!!demoBusy} onClick={loadDemo}>
+              {demoBusy ?? '用示例衣橱试试'}
+            </button>
           </div>
         </div>
       </>
@@ -499,16 +483,6 @@ export function TodayPage() {
         )}
 
         <div className="section" style={{ display: 'grid', gap: 8 }}>
-          {pendingCount > 0 && (
-            <button type="button" className="callout" onClick={() => ui.open({ kind: 'item', id: pendingItems[0].id })}>
-              <Icon name="layers" />
-              <span>
-                <strong>{pendingCount} 件还没确认</strong>
-                <br />
-                确认类别后才会参与推荐。
-              </span>
-            </button>
-          )}
           {!settings.body && (
             <button type="button" className="callout" onClick={() => ui.open({ kind: 'settings' })}>
               <Icon name="ruler" />

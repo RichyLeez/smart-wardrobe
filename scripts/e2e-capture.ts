@@ -161,7 +161,7 @@ try {
 
   console.log('衣服碰到照片边缘：');
   await page.getByTestId('photo-input').setInputFiles({ name: 'cutoff.jpg', mimeType: 'image/jpeg', buffer: photos.cutoff });
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: '补充信息' }).waitFor({ timeout: 30000 });
   const edge = page.locator('.warnbox', { hasText: '衣服碰到了照片的' });
   check(await edge.isVisible(), '提示衣服碰到了边缘');
   check(/左边/.test(await edge.innerText()), '指出是左边（下摆出了画面）');
@@ -170,9 +170,9 @@ try {
 
   console.log('横着拍的连帽外套：');
   await page.getByTestId('photo-input').setInputFiles({ name: 'parka.jpg', mimeType: 'image/jpeg', buffer: photos.parka });
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: '补充信息' }).waitFor({ timeout: 30000 });
   check((await page.locator('.warnbox', { hasText: '衣服碰到了照片的' }).count()) === 0, '四周留了背景就不提示');
-  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByRole('button', { name: '补充信息' }).click();
   await page.locator('#item-name').waitFor();
   check(await page.getByText('已经把照片转正了').isVisible(), '提示已经转正');
   const upright = await previewAspect(page);
@@ -277,8 +277,8 @@ try {
   await tabbar.getByRole('button', { name: '衣橱' }).click();
   await page.getByRole('button', { name: '录入单品' }).first().click();
   await page.getByTestId('photo-input').setInputFiles({ name: 'tee.jpg', mimeType: 'image/jpeg', buffer: photos.tee });
-  await page.getByRole('button', { name: '下一步' }).waitFor({ timeout: 30000 });
-  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByRole('button', { name: '补充信息' }).waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: '补充信息' }).click();
   await page.locator('#item-name').waitFor();
   check(!(await page.getByText('已经把照片转正了').isVisible()), '正着拍的不转');
   check((await editor().getByRole('button', { name: 'T恤', exact: true }).getAttribute('aria-pressed')) === 'true', '按轮廓猜成 T 恤');
